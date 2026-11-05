@@ -1,8 +1,14 @@
 {
   "name": "ai-index-opencode-plugin",
   "version": "0.1.0",
-  "description": "ai-index plugin for opencode — injects the repo-status digest into context at session start",
+  "description": "OpenCode V2 ai-index plugin — injects status and note-first guidance into model context",
   "type": "module",
   "main": "plugin.js",
+  "exports": {
+    ".": "./plugin.js"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.2.0"
+  },
   "private": true
 }
