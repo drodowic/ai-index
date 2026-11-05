@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# stale-check.sh - staleness table for a repo's notes, addressable by name from anywhere.
+#
+# Unlike repo-status.sh (which infers the repo from $PWD), this resolves the repo by name
+# under $AI_INDEX_GIT_ROOT, so it works for cross-repo lookups from a different checkout.
+#
+# Usage: stale-check.sh <repo-name>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=fm.sh
+source "${SCRIPT_DIR}/fm.sh"
+ai_index_load_config
+fm_require_tools
+
+INDEX_ROOT="${AI_INDEX_DOCS_ROOT}"
+GIT_ROOT="${AI_INDEX_GIT_ROOT}"
+
+repo="${1:-}"
+if [ -z "$repo" ]; then
+    echo "usage: stale-check.sh <repo-name>" >&2
+    exit 1
+fi
+
+toplevel="${GIT_ROOT}/${repo}"
+if [ ! -d "${toplevel}/.git" ]; then
+    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+    exit 1
+fi
+
+notes_dir="${INDEX_ROOT}/repos/${repo}"
+if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/dev/null)" ]; then
+    echo "ai-index: repo=${repo} - no index notes yet."
+    exit 0
+fi
+
+printf '%-35s %-10s %-12s %s\n' "note" "sha" "status" "detail"
+while IFS= read -r -d '' note; do
+    rel="${note#"${notes_dir}"/}"
+    rel="${rel%.md}"
+    note_sha="$(fm_get "$note" sha)"
+
+    if [ -z "$note_sha" ]; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "-" "n/a" "no sha recorded (group/reference note?)"
+        continue
+    fi
+
+    if ! git -C "$toplevel" cat-file -e "${note_sha}^{commit}" 2>/dev/null; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha not found in repo"
+        continue
+    fi
+
+    mapfile -t sources < <(fm_list "$note" sources)
+    if [ "${#sources[@]}" -eq 0 ]; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "fresh" "no sources declared"
+        continue
+    fi
+
+    count="$(git -C "$toplevel" rev-list --count "${note_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
+    if [ "${count:-0}" -gt 0 ]; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "STALE" "${count} commits since recorded sha"
+    else
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "fresh" "no commits to sources since recorded sha"
+    fi
+done < <(find "$notes_dir" -type f -name '*.md' -print0 | sort -z)
