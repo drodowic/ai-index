@@ -34,7 +34,8 @@ ai_index_resolve_repo_key() {
     AI_INDEX_REPO_KEY="$fallback"
 
     # The common case is the configured checkout itself; avoid listing worktrees.
-    if configured_top="$(git -C "${git_root}/${fallback}" rev-parse --show-toplevel 2>/dev/null)"; then
+    if [ -d "${git_root}/${fallback}/.git" ] && \
+        configured_top="$(git -C "${git_root}/${fallback}" rev-parse --show-toplevel 2>/dev/null)"; then
         if configured_real="$(cd "$configured_top" 2>/dev/null && pwd -P)" && \
             target_real="$(cd "$repo_root" 2>/dev/null && pwd -P)" && \
             [ "$configured_real" = "$target_real" ]; then

@@ -362,6 +362,17 @@ expect_contains "$ACTIVE_STATUS" 'repo=demo'
 expect_contains "$ACTIVE_STATUS" 'notes: overview'
 expect_contains "$ACTIVE_STATUS" '1 fresh, 0 needing review'
 
+# A sibling linked worktree under AI_INDEX_GIT_ROOT must use the original checkout's note key.
+SIBLING_SHA="$(git -C "${TMP}/repos/demo" rev-parse HEAD)"
+write_directory_note "$SIBLING_SHA"
+git -C "${TMP}/repos/demo" worktree add -q \
+    "${TMP}/repos/demo-feature" -b ai-index-sibling-worktree "$SIBLING_SHA"
+[[ -f "${TMP}/repos/demo-feature/.git" ]] || fail 'sibling fixture is not a linked worktree'
+SIBLING_STATUS="$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo-feature")"
+expect_contains "$SIBLING_STATUS" 'repo=demo'
+expect_contains "$SIBLING_STATUS" 'notes: overview'
+expect_contains "$SIBLING_STATUS" '1 fresh, 0 needing review'
+
 # Git's submodule ignore=all must not hide edits under a declared source directory.
 mkdir -p "${TMP}/submodule-source"
 git -C "${TMP}/submodule-source" init -q
