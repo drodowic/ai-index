@@ -137,11 +137,11 @@ scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>;
 ```
 
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
-`DIRTY` means staged, unstaged, or untracked declared-source changes exist; `STALE+DIRTY` can
-report both. `UNVERIFIABLE` means the recorded commit is missing or is not an ancestor of
-HEAD. `UNVERIFIED` means metadata or a Git check could not be trusted. These labels validate
-metadata and change history only; they do not establish semantic correctness or source-list
-completeness.
+`DIRTY` means staged, unstaged, or non-ignored untracked declared-source changes exist; Git-ignored
+artifacts do not count. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is
+missing or is not an ancestor of HEAD. `UNVERIFIED` means metadata or a Git check could not be
+trusted. These labels validate metadata and change history only; they do not establish semantic
+correctness or source-list completeness.
 
 ### 4. Registry maintenance
 

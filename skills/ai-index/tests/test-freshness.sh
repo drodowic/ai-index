@@ -35,6 +35,7 @@ git config user.name 'ai-index tests'
 git config user.email 'ai-index-tests@example.invalid'
 mkdir -p src
 printf 'initial\n' >'src/path with spaces.txt'
+printf '/src/node_modules/\n' >.gitignore
 printf 'unrelated\n' >README.md
 git add .
 git commit -qm 'initial'
@@ -181,6 +182,13 @@ write_directory_note "$(git rev-parse HEAD)"
 expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'fresh'
 bash "$TOUCH_SCRIPT" "$NOTE" >/dev/null
+mkdir -p src/node_modules/generated
+printf 'ignored artifact\n' >src/node_modules/generated/index.js
+git check-ignore -q src/node_modules/generated/index.js || fail 'node_modules fixture is not ignored'
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'fresh'
+bash "$TOUCH_SCRIPT" "$NOTE" >/dev/null
+
 printf 'directory source\n' >>'src/path with spaces.txt'
 git add 'src/path with spaces.txt'
 expect_status DIRTY
