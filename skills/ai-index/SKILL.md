@@ -103,6 +103,9 @@ related:
 ---
 ```
 
+`note-touch.sh` writes a full commit SHA. Existing hexadecimal abbreviations are also accepted
+when Git resolves them uniquely, including unquoted all-numeric YAML values.
+
 `sources` is a list of files/directories the note's claims depend on - this is what drives
 staleness detection, so list every path a claim actually rests on. `related` names other
 repos whose notes are relevant here (e.g. a shared API contract) - this is what makes the

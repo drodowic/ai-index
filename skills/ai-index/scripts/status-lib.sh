@@ -101,11 +101,15 @@ ai_index_load_note_metadata() {
     AI_NOTE_RELATED=()
     AI_NOTE_RELATED_LOADED=no
 
-    if ! metadata="$(yq --front-matter=extract -o=json '.' "$note" 2>/dev/null)" || \
+    if ! metadata="$(yq --front-matter=extract -o=json \
+        '. + {"__ai_index_sha_tag": (.sha | tag), "sha": (.sha | tostring)}' "$note" 2>/dev/null)" || \
         ! jq -j --arg repo "$expected_repo" --arg require_sha "$require_sha" '
             def valid:
                 type == "object" and .repo == $repo and
-                (if $require_sha == "yes" then (.sha | type == "string" and length > 0) else true end) and
+                (if $require_sha == "yes" then
+                    (.sha | type == "string" and length > 0) and
+                    (.__ai_index_sha_tag == "!!str" or .__ai_index_sha_tag == "!!int")
+                 else true end) and
                 (.sources | type == "array" and length > 0) and
                 all(.sources[];
                     type == "string" and length > 0 and

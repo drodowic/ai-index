@@ -208,6 +208,41 @@ expect_status STALE
 write_note abc
 expect_status UNVERIFIED
 
+# An unquoted all-numeric SHA is a YAML integer but remains a valid Git abbreviation.
+mkdir -p "${TMP}/repos/numeric-sha/src" "${TMP}/vault/repos/numeric-sha"
+git -C "${TMP}/repos/numeric-sha" init -q
+git -C "${TMP}/repos/numeric-sha" config user.name 'ai-index tests'
+git -C "${TMP}/repos/numeric-sha" config user.email 'ai-index-tests@example.invalid'
+printf 'numeric SHA source\n' >"${TMP}/repos/numeric-sha/src/source.txt"
+git -C "${TMP}/repos/numeric-sha" add .
+git -C "${TMP}/repos/numeric-sha" commit -qm 'numeric SHA base'
+NUMERIC_SHA=""
+for attempt in $(seq 1 200); do
+    git -C "${TMP}/repos/numeric-sha" commit --allow-empty -qm "numeric SHA candidate ${attempt}"
+    candidate="$(git -C "${TMP}/repos/numeric-sha" rev-parse --short=7 HEAD)"
+    if [[ "$candidate" =~ ^[0-9]{7}$ ]]; then
+        NUMERIC_SHA="$candidate"
+        break
+    fi
+done
+[ -n "$NUMERIC_SHA" ] || fail 'could not generate an all-numeric abbreviated SHA'
+NUMERIC_NOTE="${TMP}/vault/repos/numeric-sha/overview.md"
+cat >"$NUMERIC_NOTE" <<EOF
+---
+repo: numeric-sha
+sha: ${NUMERIC_SHA}
+sources:
+  - src/source.txt
+---
+EOF
+[[ "$(yq --front-matter=extract '.sha | tag' "$NUMERIC_NOTE")" == '!!int' ]] || \
+    fail 'numeric SHA fixture was not parsed as a YAML integer'
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/numeric-sha")" '1 fresh, 0 needing review'
+expect_contains "$(bash "$STALE_SCRIPT" numeric-sha)" 'fresh'
+bash "$TOUCH_SCRIPT" "$NUMERIC_NOTE" >/dev/null
+[[ "$(yq --front-matter=extract '.sha' "$NUMERIC_NOTE")" == "$(git -C "${TMP}/repos/numeric-sha" rev-parse HEAD)" ]] || \
+    fail 'note-touch did not replace numeric SHA with full commit ID'
+
 ORPHAN_TREE="$(git mktree </dev/null)"
 ORPHAN_SHA="$(printf 'orphan commit\n' | git commit-tree "$ORPHAN_TREE")"
 write_note "$ORPHAN_SHA"
