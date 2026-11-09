@@ -178,6 +178,21 @@ ai_index_untracked_path_count() {
     ai_index_git_path_count "$repo_root" ls-files --others --exclude-standard -z -- "$@"
 }
 
+ai_index_flagged_source_count() {
+    local repo_root="$1"; shift
+    local record tag count=0
+    if ! git -C "$repo_root" ls-files -v -z -- "$@" >"$AI_INDEX_SCRATCH" 2>/dev/null; then
+        return 1
+    fi
+    while IFS= read -r -d '' record; do
+        tag="${record:0:1}"
+        case "$tag" in
+            [[:lower:]]|S) count=$((count + 1)) ;;
+        esac
+    done <"$AI_INDEX_SCRATCH"
+    printf '%s\n' "$count"
+}
+
 ai_index_validate_sources_at() {
     local repo_root="$1" treeish="$2" i count
     AI_SOURCE_MISSING=""
@@ -198,7 +213,7 @@ ai_index_validate_sources_at() {
 
 ai_index_check_note() {
     local repo_root="$1" note="$2" expected_repo="$3"
-    local head_sha ancestor_status committed staged unstaged untracked detail source_status
+    local head_sha ancestor_status committed staged unstaged untracked flagged detail source_status
     AI_NOTE_STATUS="UNVERIFIED"
     AI_NOTE_DETAIL=""
 
@@ -257,6 +272,16 @@ ai_index_check_note() {
         else
             AI_NOTE_DETAIL="$AI_SOURCE_ERROR"
         fi
+        return 0
+    fi
+
+    if ! flagged="$(ai_index_flagged_source_count "$repo_root" "${AI_NOTE_PATHS[@]}")" || \
+        [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
+        AI_NOTE_DETAIL="Git could not inspect declared source index flags"
+        return 0
+    fi
+    if [ "$flagged" -gt 0 ]; then
+        AI_NOTE_DETAIL="declared sources have assume-unchanged or skip-worktree index flags (${flagged} path(s))"
         return 0
     fi
 

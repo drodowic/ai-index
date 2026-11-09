@@ -240,6 +240,49 @@ git add 'src/path with spaces.txt'
 expect_status DIRTY
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'staged=1'
 git commit -qm 'directory source change'
+write_directory_note "$(git rev-parse HEAD)"
+
+# assume-unchanged can hide edits from diff; flagged sources must be unverified and unstampable.
+git update-index --assume-unchanged -- 'src/path with spaces.txt'
+printf 'assume-unchanged edit\n' >>'src/path with spaces.txt'
+if git diff --quiet -- 'src/path with spaces.txt'; then
+    : # Ensure the fixture reproduces Git's index-flag behavior.
+else
+    fail 'assume-unchanged fixture is visible to git diff'
+fi
+expect_status UNVERIFIED
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'assume-unchanged or skip-worktree index flags'
+BEFORE_ASSUME_TOUCH="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/assume-touch.out" 2>&1; then
+    fail 'note-touch accepted an assume-unchanged source'
+fi
+expect_contains "$(cat "${TMP}/assume-touch.out")" 'assume-unchanged or skip-worktree index flags'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_ASSUME_TOUCH" ]] || fail 'note-touch modified note with assume-unchanged source'
+git update-index --no-assume-unchanged -- 'src/path with spaces.txt'
+git add 'src/path with spaces.txt'
+git commit -qm 'commit assume-unchanged source edit'
+write_directory_note "$(git rev-parse HEAD)"
+
+# skip-worktree also hides edits and must receive the same treatment.
+git update-index --skip-worktree -- 'src/path with spaces.txt'
+printf 'skip-worktree edit\n' >>'src/path with spaces.txt'
+if git diff --quiet -- 'src/path with spaces.txt'; then
+    : # Ensure the fixture reproduces Git's index-flag behavior.
+else
+    fail 'skip-worktree fixture is visible to git diff'
+fi
+expect_status UNVERIFIED
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'assume-unchanged or skip-worktree index flags'
+BEFORE_SKIP_TOUCH="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/skip-touch.out" 2>&1; then
+    fail 'note-touch accepted a skip-worktree source'
+fi
+expect_contains "$(cat "${TMP}/skip-touch.out")" 'assume-unchanged or skip-worktree index flags'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_SKIP_TOUCH" ]] || fail 'note-touch modified note with skip-worktree source'
+git update-index --no-skip-worktree -- 'src/path with spaces.txt'
+git add 'src/path with spaces.txt'
+git commit -qm 'commit skip-worktree source edit'
+write_directory_note "$(git rev-parse HEAD)"
 
 # Git failures do not collapse to a zero-change/fresh result.
 REAL_GIT="$(command -v git)"

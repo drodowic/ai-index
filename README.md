@@ -76,7 +76,8 @@ content at the recorded commit; a typo or absent path is `UNVERIFIED`. `STALE` m
 source changes; `DIRTY` means staged, unstaged, or non-ignored untracked source changes.
 Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY` reports both.
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
-means metadata/source-path validation failed or a Git check could not be trusted. Cross-repo
+means metadata/source-path validation failed, a declared source has an `assume-unchanged` or
+`skip-worktree` index flag, or a Git check could not be trusted. Cross-repo
 evidence must be checked in the other repo when a task relies on it; `related:` is navigation,
 not verification. `note-touch.sh` uses the active worktree when it shares the configured
 checkout's Git common directory; otherwise it uses the configured checkout. It refuses to stamp

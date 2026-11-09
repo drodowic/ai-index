@@ -75,6 +75,16 @@ else
     exit 1
 fi
 
+if ! flagged="$(ai_index_flagged_source_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
+    [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
+    echo "ai-index: cannot verify ${note}: Git could not inspect declared source index flags" >&2
+    exit 1
+fi
+if [ "$flagged" -gt 0 ]; then
+    echo "ai-index: cannot stamp ${note}: declared sources have assume-unchanged or skip-worktree index flags (${flagged} path(s)); clear the flags and review all claims" >&2
+    exit 1
+fi
+
 if ! staged="$(ai_index_staged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
     ! unstaged="$(ai_index_unstaged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
     ! untracked="$(ai_index_untracked_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")"; then

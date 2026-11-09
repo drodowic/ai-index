@@ -142,10 +142,11 @@ directory; when invoked elsewhere, it uses the configured checkout.
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
 `DIRTY` means staged, unstaged, or non-ignored untracked declared-source changes exist; Git-ignored
 artifacts do not count. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is
-missing or is not an ancestor of HEAD. `UNVERIFIED` means metadata, a declared source path, or a Git
-check could not be trusted. Declared source paths must match tracked content at the recorded
-commit. These labels validate metadata and change history only; they do not establish semantic
-correctness or source-list completeness.
+missing or is not an ancestor of HEAD. `UNVERIFIED` means metadata, a declared source path, a
+declared source's `assume-unchanged`/`skip-worktree` index flags, or a Git check could not be
+trusted. Declared source paths must match tracked content at the recorded commit. These labels
+validate metadata and change history only; they do not establish semantic correctness or
+source-list completeness.
 
 ### 4. Registry maintenance
 
