@@ -50,8 +50,7 @@ repo: demo
 sha: "${sha}"
 sources:
   - "src/path with spaces.txt"
-  - "new area"
-  - "deleted source.txt"
+  - "src/"
 ---
 
 Test note.
@@ -68,6 +67,32 @@ sources:
 ---
 
 Directory-source note.
+EOF
+}
+
+write_typo_note() {
+    cat >"$NOTE" <<EOF
+---
+repo: demo
+sha: "${1}"
+sources:
+  - "src/typo.js"
+---
+
+Misspelled-source note.
+EOF
+}
+
+write_deleted_note() {
+    cat >"$NOTE" <<EOF
+---
+repo: demo
+sha: "${1}"
+sources:
+  - "deleted source.txt"
+---
+
+Deleted-source note.
 EOF
 }
 
@@ -115,8 +140,8 @@ git add 'src/path with spaces.txt'
 git commit -qm 'unstaged source change'
 write_note "$(git rev-parse HEAD)"
 
-mkdir -p 'new area'
-printf 'untracked\n' >'new area/untracked file.txt'
+mkdir -p 'src/new area'
+printf 'untracked\n' >'src/new area/untracked file.txt'
 expect_status DIRTY
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'untracked=1'
 
@@ -130,13 +155,13 @@ expect_contains "$(cat "${TMP}/touch.out")" 'HEAD cannot represent the current s
 [[ "$(sha256sum "$NOTE")" == "$BEFORE_DIRTY_NOTE" ]] || fail 'note-touch modified note metadata on dirty sources'
 
 # Deleted declared sources remain detectable as committed changes.
-git add 'new area/untracked file.txt'
+git add 'src/new area/untracked file.txt'
 git commit -qm 'add source-area file'
 write_note "$(git rev-parse HEAD)"
 printf 'deletable\n' >'deleted source.txt'
 git add 'deleted source.txt'
 git commit -qm 'add source file'
-write_note "$(git rev-parse HEAD)"
+write_deleted_note "$(git rev-parse HEAD)"
 git rm -q 'deleted source.txt'
 git commit -qm 'delete declared source'
 expect_status STALE
@@ -188,6 +213,15 @@ ORPHAN_SHA="$(printf 'orphan commit\n' | git commit-tree "$ORPHAN_TREE")"
 write_note "$ORPHAN_SHA"
 expect_status UNVERIFIABLE
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'not an ancestor'
+
+# A syntactically valid but nonexistent source path is unverified, never stampable.
+write_typo_note "$(git rev-parse HEAD)"
+expect_status UNVERIFIED
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'src/typo.js'
+BEFORE_TYPO_NOTE="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/typo-touch.out" 2>&1; then fail 'note-touch accepted a nonexistent source path'; fi
+expect_contains "$(cat "${TMP}/typo-touch.out")" 'matched no tracked path at HEAD: src/typo.js'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_TYPO_NOTE" ]] || fail 'note-touch modified note with nonexistent sources'
 
 # A trailing slash denotes a valid directory source and works for status and stamping.
 write_directory_note "$(git rev-parse HEAD)"

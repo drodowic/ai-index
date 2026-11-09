@@ -71,14 +71,15 @@ deep dives. The 150-line overview and 200-line area limits are ceilings, not tar
 
 Freshness is a change-history check, not semantic verification. `fresh` means the scripts found
 no committed or uncommitted changes under the note's declared `sources`; it does not prove the
-claims are correct or that the source list is complete. `STALE` means committed source changes;
-`DIRTY` means staged, unstaged, or non-ignored untracked source changes; Git-ignored artifacts
-such as generated dependencies do not count. `STALE+DIRTY` reports both.
+claims are correct or that the source list is complete. Each source path must match tracked
+content at the recorded commit; a typo or absent path is `UNVERIFIED`. `STALE` means committed
+source changes; `DIRTY` means staged, unstaged, or non-ignored untracked source changes.
+Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY` reports both.
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
-means metadata or a Git check could not be trusted. Cross-repo evidence must be checked in the
-other repo when a task relies on it; `related:` is navigation, not verification. `note-touch.sh`
-refuses to stamp a note while declared sources are dirty, but the reviewer must still verify all
-retained claims before stamping.
+means metadata/source-path validation failed or a Git check could not be trusted. Cross-repo
+evidence must be checked in the other repo when a task relies on it; `related:` is navigation,
+not verification. `note-touch.sh` refuses to stamp a note while declared sources are dirty, but
+the reviewer must still verify all retained claims before stamping.
 
 ## Tests and evaluation
 

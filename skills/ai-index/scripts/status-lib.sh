@@ -65,9 +65,27 @@ ai_index_untracked_path_count() {
     ai_index_git_path_count "$repo_root" ls-files --others --exclude-standard -z -- "$@"
 }
 
+ai_index_validate_sources_at() {
+    local repo_root="$1" treeish="$2" i count
+    AI_SOURCE_MISSING=""
+    AI_SOURCE_ERROR=""
+
+    for i in "${!AI_NOTE_PATHS[@]}"; do
+        if ! count="$(ai_index_git_path_count "$repo_root" ls-tree -r --full-tree -z --name-only "$treeish" -- "${AI_NOTE_PATHS[$i]}")"; then
+            AI_SOURCE_ERROR="Git could not inspect declared sources"
+            return 2
+        fi
+        if [ "$count" -eq 0 ]; then
+            AI_SOURCE_MISSING="${AI_NOTE_SOURCES[$i]}"
+            return 1
+        fi
+    done
+    return 0
+}
+
 ai_index_check_note() {
     local repo_root="$1" note="$2" expected_repo="$3"
-    local head_sha ancestor_status committed staged unstaged untracked detail
+    local head_sha ancestor_status committed staged unstaged untracked detail source_status
     AI_NOTE_STATUS="UNVERIFIED"
     AI_NOTE_DETAIL=""
 
@@ -109,6 +127,18 @@ ai_index_check_note() {
     fi
 
     ai_index_pathspecs
+    if ai_index_validate_sources_at "$repo_root" "$resolved_sha"; then
+        :
+    else
+        source_status=$?
+        if [ "$source_status" -eq 1 ]; then
+            AI_NOTE_DETAIL="declared source matched no tracked path at recorded commit: ${AI_SOURCE_MISSING}"
+        else
+            AI_NOTE_DETAIL="$AI_SOURCE_ERROR"
+        fi
+        return 0
+    fi
+
     if ! committed="$(git -C "$repo_root" rev-list --count "${resolved_sha}..${head_sha}" -- "${AI_NOTE_PATHS[@]}" 2>/dev/null)" || \
         [[ ! "$committed" =~ ^[0-9]+$ ]]; then
         AI_NOTE_DETAIL="Git could not inspect committed source changes"

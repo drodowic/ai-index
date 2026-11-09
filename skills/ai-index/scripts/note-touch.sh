@@ -38,7 +38,24 @@ if ! ai_index_load_note_metadata "$note" "$repo" no; then
     echo "ai-index: cannot verify ${note}: ${AI_NOTE_REASON}" >&2
     exit 1
 fi
+
+if ! head_sha="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
+    echo "ai-index: cannot stamp ${note}: Git could not resolve HEAD" >&2
+    exit 1
+fi
 ai_index_pathspecs
+
+if ai_index_validate_sources_at "$toplevel" "$head_sha"; then
+    :
+else
+    source_status=$?
+    if [ "$source_status" -eq 1 ]; then
+        echo "ai-index: cannot stamp ${note}: declared source matched no tracked path at HEAD: ${AI_SOURCE_MISSING}; correct the source list and review all claims" >&2
+    else
+        echo "ai-index: cannot stamp ${note}: ${AI_SOURCE_ERROR}" >&2
+    fi
+    exit 1
+fi
 
 if ! staged="$(ai_index_git_path_count "$toplevel" diff --cached --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
     ! unstaged="$(ai_index_git_path_count "$toplevel" diff --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
@@ -51,10 +68,6 @@ if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
     exit 1
 fi
 
-if ! head_sha="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
-    echo "ai-index: cannot stamp ${note}: Git could not resolve HEAD" >&2
-    exit 1
-fi
 today="$(date +%F)"
 
 fm_set "$note" sha "$head_sha"
