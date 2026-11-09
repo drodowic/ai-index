@@ -9,6 +9,21 @@ the user's Obsidian vault; this repository contains only the skill, scripts, and
 - `plugins/ai-index/` — plugin and its package metadata.
 - `ai-index.env.example` — starter configuration for each user's machine.
 
+## Install or update
+
+Run the installer from this checkout to copy the skill and plugin into the global OpenCode
+directories. It installs missing directories and updates existing ones. `OPENCODE_CONFIG_DIR`
+can override the default `~/.config/opencode` destination:
+
+```bash
+./install.sh
+```
+
+If the plugin directory is not referenced in `opencode.json` or `opencode.jsonc` using an
+absolute or config-relative path, the installer prints a registration entry to merge into
+the existing `plugins` array. It does not edit that config file. OpenCode V2 does not
+automatically discover arbitrary directories under the global plugins folder.
+
 ## Local setup
 
 The scripts load `~/.config/opencode/ai-index.env`. Copy the example there, then adjust
@@ -23,11 +38,8 @@ cp -n ai-index.env.example ~/.config/opencode/ai-index.env
 must point to the parent directory containing your project checkouts. The scripts require
 Bash, Git, `jq`, and mikefarah `yq` v4 or newer.
 
-To install the skill and plugin into the global OpenCode layout, copy
-`skills/ai-index/` to `~/.config/opencode/skills/ai-index/` and
-`plugins/ai-index/` to `~/.config/opencode/plugins/ai-index/`. Add that plugin directory
-to the `plugins` array in `~/.config/opencode/opencode.json(c)`; V2 does not automatically
-discover arbitrary directories under the global plugins folder:
+To register the installed plugin, add its directory to the `plugins` array in
+`~/.config/opencode/opencode.json(c)`:
 
 ```jsonc
 {
