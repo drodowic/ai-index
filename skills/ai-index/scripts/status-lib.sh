@@ -19,7 +19,7 @@ ai_index_load_note_metadata() {
             all(.sources[];
                 type == "string" and length > 0 and
                 (startswith("/") | not) and
-                ((split("/") | any(. == ".." or . == "")) | not)
+                (((if endswith("/") then .[0:-1] else . end) | split("/") | any(. == ".." or . == "")) | not)
             )
         ' >/dev/null <<<"$metadata"; then
         AI_NOTE_REASON="invalid or incomplete frontmatter (${required_fields})"
@@ -41,6 +41,7 @@ ai_index_pathspecs() {
     AI_NOTE_PATHS=()
     local source
     for source in "${AI_NOTE_SOURCES[@]}"; do
+        source="${source%/}"
         AI_NOTE_PATHS+=(":(literal)${source}")
     done
 }

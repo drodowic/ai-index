@@ -57,6 +57,19 @@ Test note.
 EOF
 }
 
+write_directory_note() {
+    cat >"$NOTE" <<EOF
+---
+repo: demo
+sha: "${1}"
+sources:
+  - "src/"
+---
+
+Directory-source note.
+EOF
+}
+
 write_note "$BASE_SHA"
 expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'fresh'
@@ -163,6 +176,17 @@ write_note "$ORPHAN_SHA"
 expect_status UNVERIFIABLE
 expect_contains "$(bash "$STALE_SCRIPT" demo)" 'not an ancestor'
 
+# A trailing slash denotes a valid directory source and works for status and stamping.
+write_directory_note "$(git rev-parse HEAD)"
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'fresh'
+bash "$TOUCH_SCRIPT" "$NOTE" >/dev/null
+printf 'directory source\n' >>'src/path with spaces.txt'
+git add 'src/path with spaces.txt'
+expect_status DIRTY
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'staged=1'
+git commit -qm 'directory source change'
+
 # Git failures do not collapse to a zero-change/fresh result.
 REAL_GIT="$(command -v git)"
 mkdir -p "${TMP}/fake-bin"
@@ -177,7 +201,7 @@ esac
 exec "$AI_INDEX_TEST_REAL_GIT" "$@"
 EOF
 chmod +x "${TMP}/fake-bin/git"
-write_note "$(git rev-parse HEAD)"
+write_directory_note "$(git rev-parse HEAD)"
 AI_INDEX_TEST_REAL_GIT="$REAL_GIT" PATH="${TMP}/fake-bin:$PATH" \
     bash "$STATUS_SCRIPT" "${TMP}/repos/demo" >"${TMP}/git-failure.out"
 expect_contains "$(cat "${TMP}/git-failure.out")" 'UNVERIFIED'
