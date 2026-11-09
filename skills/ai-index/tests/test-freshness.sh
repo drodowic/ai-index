@@ -353,6 +353,45 @@ expect_contains "$(cat "${TMP}/submodule-touch.out")" 'uncommitted changes'
 [[ "$(sha256sum "${TMP}/vault/repos/demo/overview.md")" == "$BEFORE_SUBMODULE_TOUCH" ]] || \
     fail 'note-touch modified metadata for a dirty submodule'
 
+# Full history must retain a source-changing merge omitted by default path simplification.
+mkdir -p "${TMP}/repos/merge-demo/src" "${TMP}/vault/repos/merge-demo"
+git -C "${TMP}/repos/merge-demo" init -q
+git -C "${TMP}/repos/merge-demo" config user.name 'ai-index tests'
+git -C "${TMP}/repos/merge-demo" config user.email 'ai-index-tests@example.invalid'
+printf 'base source\n' >"${TMP}/repos/merge-demo/src/contract.txt"
+git -C "${TMP}/repos/merge-demo" add .
+git -C "${TMP}/repos/merge-demo" commit -qm 'merge test base'
+MERGE_BASE="$(git -C "${TMP}/repos/merge-demo" rev-parse HEAD)"
+git -C "${TMP}/repos/merge-demo" checkout -qb recorded-source
+printf 'recorded source\n' >"${TMP}/repos/merge-demo/src/contract.txt"
+git -C "${TMP}/repos/merge-demo" commit -qam 'recorded source state'
+RECORDED_SHA="$(git -C "${TMP}/repos/merge-demo" rev-parse HEAD)"
+git -C "${TMP}/repos/merge-demo" checkout -q --detach "$MERGE_BASE"
+printf 'side branch\n' >"${TMP}/repos/merge-demo/README.md"
+git -C "${TMP}/repos/merge-demo" add README.md
+git -C "${TMP}/repos/merge-demo" commit -qm 'side branch without source change'
+SIDE_SHA="$(git -C "${TMP}/repos/merge-demo" rev-parse HEAD)"
+MERGE_TREE="$(git -C "${TMP}/repos/merge-demo" rev-parse "${SIDE_SHA}^{tree}")"
+MERGE_SHA="$(printf 'merge tree selects side source\n' | git -C "${TMP}/repos/merge-demo" commit-tree "$MERGE_TREE" -p "$RECORDED_SHA" -p "$SIDE_SHA")"
+git -C "${TMP}/repos/merge-demo" update-ref refs/heads/main "$MERGE_SHA"
+git -C "${TMP}/repos/merge-demo" symbolic-ref HEAD refs/heads/main
+DEFAULT_MERGE_COUNT="$(git -C "${TMP}/repos/merge-demo" rev-list --count \
+    "${RECORDED_SHA}..${MERGE_SHA}" -- ':(literal)src/contract.txt')"
+FULL_MERGE_COUNT="$(git -C "${TMP}/repos/merge-demo" rev-list --full-history --count \
+    "${RECORDED_SHA}..${MERGE_SHA}" -- ':(literal)src/contract.txt')"
+[[ "$DEFAULT_MERGE_COUNT" == 0 && "$FULL_MERGE_COUNT" -gt 0 ]] || \
+    fail 'merge fixture does not reproduce path-limited history simplification'
+cat >"${TMP}/vault/repos/merge-demo/overview.md" <<EOF
+---
+repo: merge-demo
+sha: "${RECORDED_SHA}"
+sources:
+  - "src/contract.txt"
+---
+EOF
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/merge-demo")" 'STALE'
+expect_contains "$(bash "$STALE_SCRIPT" merge-demo)" 'STALE'
+
 # Plugin reminder stays short and preserves the key workflow guardrails.
 GUIDANCE="$(sed -n '/const AI_INDEX_GUIDANCE = \[/,/\].join/p' "$PLUGIN" | tr -d '\n')"
 [[ ${#GUIDANCE} -lt 700 ]] || fail "plugin guidance is not concise (${#GUIDANCE} chars)"

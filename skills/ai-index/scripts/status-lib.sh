@@ -260,7 +260,9 @@ ai_index_check_note() {
         return 0
     fi
 
-    if ! committed="$(git -C "$repo_root" rev-list --count "${resolved_sha}..${head_sha}" -- "${AI_NOTE_PATHS[@]}" 2>/dev/null)" || \
+    # Default path history can simplify away a merge whose tree differs from the
+    # recorded commit. Keep all merge parents so merged source changes are counted.
+    if ! committed="$(git -C "$repo_root" rev-list --full-history --count "${resolved_sha}..${head_sha}" -- "${AI_NOTE_PATHS[@]}" 2>/dev/null)" || \
         [[ ! "$committed" =~ ^[0-9]+$ ]]; then
         AI_NOTE_DETAIL="Git could not inspect committed source changes"
         return 0
