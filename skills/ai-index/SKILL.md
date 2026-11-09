@@ -144,7 +144,8 @@ make the check atomic with concurrent Git writers.
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
 Merge history is conservative: a merge can mark an unchanged source `STALE`.
 `DIRTY` means staged, unstaged, or non-ignored untracked declared-source changes exist; Git-ignored
-artifacts do not count. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is
+artifacts do not count. Declared submodules are checked recursively, overriding each level's
+submodule-ignore setting. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is
 missing or is not an ancestor of HEAD. `UNVERIFIED` means metadata, a declared source path, a
 declared source's `assume-unchanged`/`skip-worktree` index flags, an unavailable declared
 submodule, or a Git check could not be trusted. Nested declared submodule indexes are checked

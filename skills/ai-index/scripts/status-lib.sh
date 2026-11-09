@@ -199,9 +199,21 @@ ai_index_untracked_path_count() {
 }
 
 ai_index_check_source_index() {
-    local repo_root="$1"; shift
-    local record tag mode path sub_root sub_top
+    local repo_root="$1" depth="$2"; shift 2
+    local record tag mode path sub_root sub_top staged unstaged untracked
     local -a records=()
+
+    if [ "$depth" -gt 0 ]; then
+        if ! staged="$(ai_index_staged_path_count "$repo_root" "$@")" || \
+            ! unstaged="$(ai_index_unstaged_path_count "$repo_root" "$@")" || \
+            ! untracked="$(ai_index_untracked_path_count "$repo_root" "$@")"; then
+            return 1
+        fi
+        if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+            AI_INDEX_NESTED_SUBMODULE_DIRTY=1
+        fi
+    fi
+
     if ! git -C "$repo_root" ls-files -v --stage -z -- "$@" >"$AI_INDEX_SCRATCH" 2>/dev/null || \
         ! mapfile -d '' -t records <"$AI_INDEX_SCRATCH"; then
         return 1
@@ -223,14 +235,15 @@ ai_index_check_source_index() {
             return 1
         fi
         # Check each index separately: recursive ls-files omits intermediate gitlinks.
-        ai_index_check_source_index "$sub_root" || return 1
+        ai_index_check_source_index "$sub_root" "$((depth + 1))" || return 1
     done
 }
 
 ai_index_flagged_source_count() {
     local repo_root="$1" flagged_count=0; shift
-    ai_index_check_source_index "$repo_root" "$@" || return 1
-    printf '%s\n' "$flagged_count"
+    AI_INDEX_NESTED_SUBMODULE_DIRTY=0
+    ai_index_check_source_index "$repo_root" 0 "$@" || return 1
+    printf '%s %s\n' "$flagged_count" "$AI_INDEX_NESTED_SUBMODULE_DIRTY"
 }
 
 ai_index_validate_sources_at() {
@@ -253,7 +266,7 @@ ai_index_validate_sources_at() {
 
 ai_index_check_note() {
     local repo_root="$1" note="$2" expected_repo="$3"
-    local head_sha ancestor_status committed staged unstaged untracked flagged detail source_status
+    local head_sha ancestor_status committed staged unstaged untracked flagged flag_result detail source_status submodule_dirty
     AI_NOTE_STATUS="UNVERIFIED"
     AI_NOTE_DETAIL=""
 
@@ -315,9 +328,13 @@ ai_index_check_note() {
         return 0
     fi
 
-    if ! flagged="$(ai_index_flagged_source_count "$repo_root" "${AI_NOTE_PATHS[@]}")" || \
-        [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
+    if ! flag_result="$(ai_index_flagged_source_count "$repo_root" "${AI_NOTE_PATHS[@]}")"; then
         AI_NOTE_DETAIL="Git could not inspect declared source index flags or a declared submodule is unavailable"
+        return 0
+    fi
+    read -r flagged submodule_dirty <<<"$flag_result"
+    if [[ ! "$flagged" =~ ^[0-9]+$ || ! "$submodule_dirty" =~ ^[0-9]+$ ]]; then
+        AI_NOTE_DETAIL="Git returned invalid declared source index status"
         return 0
     fi
     if [ "$flagged" -gt 0 ]; then
@@ -349,10 +366,15 @@ ai_index_check_note() {
         detail="no detected source changes"
     fi
 
-    if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
+    if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ] || \
+        [ "$submodule_dirty" -gt 0 ]; then
         if [ "$AI_NOTE_STATUS" = fresh ]; then AI_NOTE_STATUS="DIRTY"; else AI_NOTE_STATUS="STALE+DIRTY"; fi
         if [ "$committed" -eq 0 ]; then detail="0 committed source changes"; fi
         detail+="; staged=${staged} unstaged=${unstaged} untracked=${untracked}"
+        if [ "$submodule_dirty" -gt 0 ] && [ "$staged" -eq 0 ] && \
+            [ "$unstaged" -eq 0 ] && [ "$untracked" -eq 0 ]; then
+            detail+="; nested submodule changes detected"
+        fi
     fi
     AI_NOTE_DETAIL="$detail"
 }

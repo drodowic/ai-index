@@ -75,6 +75,7 @@ claims are correct or that the source list is complete. Each source path must ma
 content at the recorded commit; a typo or absent path is `UNVERIFIED`. `STALE` means committed
 source changes; `DIRTY` means staged, unstaged, or non-ignored untracked source changes.
 Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY` reports both.
+Declared submodules are checked recursively, overriding each level's submodule-ignore setting.
 Merge history is checked conservatively, so a merge can mark an unchanged source `STALE`.
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
 means metadata/source-path validation failed, a declared source has an `assume-unchanged` or

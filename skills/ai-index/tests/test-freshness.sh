@@ -70,6 +70,19 @@ Directory-source note.
 EOF
 }
 
+write_submodule_note() {
+    cat >"$NOTE" <<EOF
+---
+repo: demo
+sha: "${1}"
+sources:
+  - "src/ignored-submodule/"
+---
+
+Submodule-source note.
+EOF
+}
+
 write_typo_note() {
     cat >"$NOTE" <<EOF
 ---
@@ -373,7 +386,7 @@ expect_contains "$SIBLING_STATUS" 'repo=demo'
 expect_contains "$SIBLING_STATUS" 'notes: overview'
 expect_contains "$SIBLING_STATUS" '1 fresh, 0 needing review'
 
-# Git's submodule ignore=all must not hide edits under a declared source directory.
+# Nested submodule ignore=all must not hide edits under a declared parent-submodule source.
 mkdir -p "${TMP}/submodule-source"
 git -C "${TMP}/submodule-source" init -q
 git -C "${TMP}/submodule-source" config user.name 'ai-index tests'
@@ -381,31 +394,72 @@ git -C "${TMP}/submodule-source" config user.email 'ai-index-tests@example.inval
 printf 'submodule source\n' >"${TMP}/submodule-source/source.txt"
 git -C "${TMP}/submodule-source" add .
 git -C "${TMP}/submodule-source" commit -qm 'initial submodule source'
+mkdir -p "${TMP}/nested-submodule-source"
+git -C "${TMP}/nested-submodule-source" init -q
+git -C "${TMP}/nested-submodule-source" config user.name 'ai-index tests'
+git -C "${TMP}/nested-submodule-source" config user.email 'ai-index-tests@example.invalid'
+printf 'nested source\n' >"${TMP}/nested-submodule-source/source.txt"
+git -C "${TMP}/nested-submodule-source" add .
+git -C "${TMP}/nested-submodule-source" commit -qm 'initial nested source'
+git -C "${TMP}/submodule-source" -c protocol.file.allow=always submodule add -q \
+    "${TMP}/nested-submodule-source" nested
+git -C "${TMP}/submodule-source" config -f .gitmodules submodule.nested.ignore all
+git -C "${TMP}/submodule-source" add .gitmodules nested
+git -C "${TMP}/submodule-source" commit -qm 'add ignored nested submodule'
 git -C "${TMP}/repos/demo" -c protocol.file.allow=always submodule add -q \
     "${TMP}/submodule-source" src/ignored-submodule
+git -C "${TMP}/repos/demo/src/ignored-submodule" -c protocol.file.allow=always \
+    submodule update --init --recursive -q
 git -C "${TMP}/repos/demo" config -f .gitmodules submodule.src/ignored-submodule.ignore all
 git -C "${TMP}/repos/demo" add .gitmodules src/ignored-submodule
 git -C "${TMP}/repos/demo" commit -qm 'add ignored submodule source'
-write_directory_note "$(git -C "${TMP}/repos/demo" rev-parse HEAD)"
+write_submodule_note "$(git -C "${TMP}/repos/demo" rev-parse HEAD)"
 expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
-printf 'modified in submodule\n' >>"${TMP}/repos/demo/src/ignored-submodule/source.txt"
-if git -C "${TMP}/repos/demo" diff --quiet -- src/ignored-submodule; then
+NESTED_ROOT="${TMP}/repos/demo/src/ignored-submodule/nested"
+NESTED_SOURCE="${TMP}/repos/demo/src/ignored-submodule/nested/source.txt"
+printf 'modified tracked nested source\n' >>"$NESTED_SOURCE"
+if git -C "${TMP}/repos/demo" diff --ignore-submodules=none --quiet -- src/ignored-submodule; then
     : # Ensure the fixture reproduces Git's ignore=all behavior.
 else
-    fail 'submodule fixture is not hidden by ignore=all'
-fi
-if git -C "${TMP}/repos/demo" diff --ignore-submodules=none --quiet -- src/ignored-submodule; then
-    fail 'forced submodule diff failed to detect the fixture edit'
+    fail 'top-level diff unexpectedly detected the nested ignored edit'
 fi
 expect_status DIRTY
-expect_contains "$(bash "$STALE_SCRIPT" demo)" 'unstaged=1'
-BEFORE_SUBMODULE_TOUCH="$(sha256sum "${TMP}/vault/repos/demo/overview.md")"
-if bash "$TOUCH_SCRIPT" "${TMP}/vault/repos/demo/overview.md" >"${TMP}/submodule-touch.out" 2>&1; then
-    fail 'note-touch accepted a modified ignored submodule'
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'nested submodule changes detected'
+BEFORE_NESTED_TRACKED_TOUCH="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/nested-tracked-touch.out" 2>&1; then
+    fail 'note-touch accepted a modified nested submodule source'
 fi
-expect_contains "$(cat "${TMP}/submodule-touch.out")" 'uncommitted changes'
-[[ "$(sha256sum "${TMP}/vault/repos/demo/overview.md")" == "$BEFORE_SUBMODULE_TOUCH" ]] || \
-    fail 'note-touch modified metadata for a dirty submodule'
+expect_contains "$(cat "${TMP}/nested-tracked-touch.out")" 'nested declared submodule sources have uncommitted changes'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_NESTED_TRACKED_TOUCH" ]] || \
+    fail 'note-touch modified metadata for a dirty nested submodule'
+
+git -C "$NESTED_ROOT" add source.txt
+expect_status DIRTY
+BEFORE_NESTED_STAGED_TOUCH="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/nested-staged-touch.out" 2>&1; then
+    fail 'note-touch accepted a staged nested submodule edit'
+fi
+expect_contains "$(cat "${TMP}/nested-staged-touch.out")" 'nested declared submodule sources have uncommitted changes'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_NESTED_STAGED_TOUCH" ]] || \
+    fail 'note-touch modified metadata for a staged nested submodule edit'
+
+git -C "$NESTED_ROOT" restore --staged source.txt
+git -C "$NESTED_ROOT" restore source.txt
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
+printf 'untracked nested source\n' >"$NESTED_ROOT/untracked.txt"
+if git -C "${TMP}/repos/demo" diff --ignore-submodules=none --quiet -- src/ignored-submodule; then
+    : # Ensure nested untracked content is hidden by the intermediate ignore=all.
+else
+    fail 'top-level diff unexpectedly detected nested untracked content'
+fi
+expect_status DIRTY
+BEFORE_NESTED_UNTRACKED_TOUCH="$(sha256sum "$NOTE")"
+if bash "$TOUCH_SCRIPT" "$NOTE" >"${TMP}/nested-untracked-touch.out" 2>&1; then
+    fail 'note-touch accepted untracked nested submodule content'
+fi
+expect_contains "$(cat "${TMP}/nested-untracked-touch.out")" 'nested declared submodule sources have uncommitted changes'
+[[ "$(sha256sum "$NOTE")" == "$BEFORE_NESTED_UNTRACKED_TOUCH" ]] || \
+    fail 'note-touch modified metadata for untracked nested submodule content'
 
 # Full history must retain a source-changing merge omitted by default path simplification.
 mkdir -p "${TMP}/repos/merge-demo/src" "${TMP}/vault/repos/merge-demo"
