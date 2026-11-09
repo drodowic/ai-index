@@ -61,3 +61,33 @@ The included plugin uses the V2 plugin API. It injects the repo-status digest an
 the assistant to check notes before source review. The plugin is read-only: the ai-index
 skill remains responsible for recording significant durable findings. The skill and
 scripts are independent of the plugin API.
+
+## Note quality and freshness
+
+Keep notes concise and behavioral: state what happens, when, and important exceptions;
+support claims with relevant source paths, and cite tests only when an inspected test clarifies
+the behavior. Label inference and dated observations. Link related notes instead of duplicating
+deep dives. The 150-line overview and 200-line area limits are ceilings, not targets.
+
+Freshness is a change-history check, not semantic verification. `fresh` means the scripts found
+no committed or uncommitted changes under the note's declared `sources`; it does not prove the
+claims are correct or that the source list is complete. `STALE` means committed source changes;
+`DIRTY` means staged, unstaged, or untracked source changes; `STALE+DIRTY` reports both.
+`UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
+means metadata or a Git check could not be trusted. Cross-repo evidence must be checked in the
+other repo when a task relies on it; `related:` is navigation, not verification. `note-touch.sh`
+refuses to stamp a note while declared sources are dirty, but the reviewer must still verify all
+retained claims before stamping.
+
+## Tests and evaluation
+
+Run the isolated shell tests with:
+
+```bash
+bash skills/ai-index/tests/test-freshness.sh
+```
+
+The tests use temporary Git repositories, config, and vault data; they require Bash, Git, `jq`,
+and mikefarah `yq` v4 or newer, and do not access the network or the configured user vault.
+Paired accuracy evaluation was not run in this implementation pass. No personal-vault evaluation
+data is included in this repository.

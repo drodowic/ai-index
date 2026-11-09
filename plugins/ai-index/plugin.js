@@ -15,9 +15,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const STATUS_SCRIPT = join(here, '..', '..', 'skills', 'ai-index', 'scripts', 'repo-status.sh');
 const SESSION_HOOKS = ['context', 'compaction', 'generate', 'title'];
 const AI_INDEX_GUIDANCE = [
-  'ai-index workflow: Before analyzing or re-reviewing repository code for information, check the ai-index status and read applicable notes first.',
-  'Read fresh notes before their source files; for stale or unverifiable notes, re-check only their recorded sources.',
-  'After non-trivial investigation, record significant durable findings with the ai-index skill and run note-touch.sh. Skip one-off findings.',
+  'ai-index: Read only the relevant notes first; fresh means no detected source changes, not proven correct.',
+  'Verify task-critical claims in relevant sources; prioritize security, destructive operations, and external contracts. For stale notes, inspect changed declared sources first; check other repos when cross-repo claims matter. Re-run status during long sessions.',
+  'Capture concise, source-backed durable findings with the skill; note-touch.sh refuses dirty sources. Skip one-off findings.',
 ].join(' ');
 
 async function computeDigest(target) {

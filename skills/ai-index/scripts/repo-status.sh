@@ -13,12 +13,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/fm.sh"
 ai_index_load_config
 fm_require_tools
+# shellcheck source=status-lib.sh
+source "${SCRIPT_DIR}/status-lib.sh"
 
 INDEX_ROOT="${AI_INDEX_DOCS_ROOT}"
 TARGET="${1:-$PWD}"
 
-toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -z "$toplevel" ] && exit 0   # not a git repo - silent, not an error
+if ! toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)"; then
+    # Preserve silent behavior for ordinary non-repo paths, but do not hide Git failures
+    # when a repository marker identifies the intended checkout/worktree.
+    probe="$(cd "$TARGET" 2>/dev/null && pwd -P || true)"
+    marker_root=""
+    while [ -n "$probe" ]; do
+        if [ -e "${probe}/.git" ]; then
+            marker_root="$probe"
+            break
+        fi
+        parent="$(dirname "$probe")"
+        [ "$parent" = "$probe" ] && break
+        probe="$parent"
+    done
+    [ -z "$marker_root" ] && exit 0
+
+    repo="$(basename "$marker_root")"
+    notes_dir="${INDEX_ROOT}/repos/${repo}"
+    if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/dev/null)" ]; then
+        echo "[ai-index] repo=${repo} UNVERIFIED: Git could not resolve repository status"
+        exit 0
+    fi
+    mapfile -t failed_notes < <(find "$notes_dir" -type f -name '*.md' -printf '%P\n' | sed 's/\.md$//' | sort)
+    echo "[ai-index] repo=${repo}"
+    echo "  notes: $(IFS=,; echo "${failed_notes[*]}")"
+    echo "  freshness: 0 fresh, ${#failed_notes[@]} needing review"
+    echo "  UNVERIFIED: all notes (Git could not resolve repository status)"
+    exit 0
+fi
 
 repo="$(basename "$toplevel")"
 branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
@@ -31,27 +60,20 @@ if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/de
 fi
 
 notes=()
-stale_lines=()
+status_lines=()
 related_from_notes=()
+fresh_count=0
 
 while IFS= read -r -d '' note; do
     rel="${note#"${notes_dir}"/}"
     rel="${rel%.md}"
     notes+=("$rel")
 
-    note_sha="$(fm_get "$note" sha)"
-    if [ -n "$note_sha" ]; then
-        if git -C "$toplevel" cat-file -e "${note_sha}^{commit}" 2>/dev/null; then
-            mapfile -t sources < <(fm_list "$note" sources)
-            if [ "${#sources[@]}" -gt 0 ]; then
-                count="$(git -C "$toplevel" rev-list --count "${note_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
-                if [ "${count:-0}" -gt 0 ]; then
-                    stale_lines+=("  STALE: ${rel} (${count} commits since ${note_sha:0:7})")
-                fi
-            fi
-        else
-            stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} not found - force-push or shallow clone?)")
-        fi
+    ai_index_check_note "$toplevel" "$note" "$repo"
+    if [ "$AI_NOTE_STATUS" = fresh ]; then
+        fresh_count=$((fresh_count + 1))
+    else
+        status_lines+=("  ${AI_NOTE_STATUS}: ${rel} (${AI_NOTE_DETAIL})")
     fi
 
     mapfile -t note_related < <(fm_list "$note" related)
@@ -73,7 +95,8 @@ fi
 
 echo "[ai-index] repo=${repo} @ ${branch} ${head_sha}"
 echo "  notes: $(IFS=,; echo "${notes[*]}")"
-for line in "${stale_lines[@]:-}"; do
+echo "  freshness: ${fresh_count} fresh, ${#status_lines[@]} needing review"
+for line in "${status_lines[@]:-}"; do
     [ -n "$line" ] && echo "$line"
 done
 

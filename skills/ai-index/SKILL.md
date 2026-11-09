@@ -20,8 +20,8 @@ Scripts live alongside this file in `scripts/` and require `jq` and `yq` (mikefa
 supports `--front-matter`).
 
 Every note carries YAML frontmatter recording the repo, the git SHA it was verified against,
-and the source paths its claims depend on - so staleness is computed exactly rather than
-guessed, whether the code changed via your own commits or via upstream pulls.
+and the source paths its claims depend on. Freshness checks detect changes to those declared
+sources; they do not prove the note is semantically correct or that its source list is complete.
 
 ## Layout
 
@@ -53,15 +53,24 @@ scripts/repo-status.sh [path]      # defaults to $PWD; the ai-index opencode plu
                                     # printed this digest into context at session start
 ```
 
-This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
-have notes worth checking. It is silent if the path isn't a git repo.
+This prints which notes exist, notes needing review, and related repos with notes worth
+checking. It is silent if the path isn't a git repo.
 
-- Read fresh notes directly - trust them, cite them (`per repos/<repo>/overview.md`) instead
-  of re-reading the source they summarize.
-- For a `STALE` note: re-read only the `sources` paths listed in its frontmatter (not the
-  whole repo), update the note's prose to match, then run `note-touch.sh` (see Capture).
-- For `UNVERIFIABLE` (recorded sha not found - force-push, rebase, shallow clone): treat as
-  stale and re-verify from scratch.
+- Choose the relevant note and section; do not read every note by default. Read a fresh note
+  before source review, but treat `fresh` as “no detected source changes,” not as proof of
+  correctness or completeness.
+- For claims central to the task, check the relevant implementation and, when useful, tests
+  or configuration. Prioritize security, destructive operations, and external contracts.
+  Reuse evidence already gathered; do not inspect extra files just to add citations.
+- For stale notes, inspect changed declared sources first. Expand to callers, tests, or other
+  sources only when needed to establish the claim. A missing/invalid SHA or source list,
+  Git error, missing commit, or non-ancestor commit is unverified; do not rely on it.
+- Do not advance a note's verification SHA after checking only some of its claims. Verify all
+  claims the note retains, or split out the verified material and leave the rest unverified.
+- For cross-repo claims, check the relevant evidence in that other repo when the current task
+  relies on it. Name the repo and its revision or dated evidence; `related:` alone is not proof.
+- Re-run status during a long session when changes may have occurred; plugin status is cached
+  context, not a live guarantee.
 
 ### 2. Cross-repo lookup
 
@@ -99,19 +108,40 @@ staleness detection, so list every path a claim actually rests on. `related` nam
 repos whose notes are relevant here (e.g. a shared API contract) - this is what makes the
 note reachable from those other repos too.
 
-Content rules (full detail in `how-to-use.md`):
-- Cite `path` or `path:line` for non-obvious claims; don't paste more than ~10 lines of code.
-- Record *why*, not just *what* - the why is what can't be cheaply re-derived by reading code.
-- Keep `overview.md` ≤150 lines and `areas/*.md` ≤200 lines; split into a new area note
-  rather than growing one past the cap.
+Content rules:
+- State behavior: what happens, when it happens, and important exceptions or boundaries.
+- Support claims with relevant implementation paths. Cite a test only when an inspected,
+  relevant test clarifies behavior; do not imply test coverage you did not inspect.
+- Separate fact from inference. Label inferred rationale and date observations; do not invent
+  a “why.” Omit it when evidence is unavailable.
+- Keep notes brief: short bullets, related-note links instead of duplicated explanations,
+  and omit details easily recovered from cited code. The `overview.md` ≤150-line and
+  `areas/*.md` ≤200-line limits are ceilings, not targets. Split a hard-to-navigate topic into
+  its own note and put a short summary/link in the overview.
+- `sources` must include every repository-relative path in this repo that supports the note's
+  claims. For cross-repo facts, cite the other repo and its revision/path or dated evidence in
+  the note body; this repo's freshness does not cover that evidence. `related:` is navigation,
+  not verification. Do not list unrelated paths as a substitute for claim-level evidence.
+- If a claim cannot be verified economically, omit it or label its uncertainty explicitly.
 - Never record secrets, tokens, or customer data - the vault syncs to other devices.
 - Skip capture for throwaway/one-off investigation; only record durable findings.
 
-After writing or editing a note:
+Example density: `Failed queue messages are retried; malformed messages are logged as
+permanent failures (lambda/handler.py, tests/test_handler.py).` Cite tests only if inspected.
+
+After writing or editing a note, verify all retained claims and ensure declared sources are
+clean and committed before stamping it:
 
 ```
-scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>
+scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>; refuses dirty sources
 ```
+
+`STALE` means committed changes were detected under declared sources since the recorded SHA.
+`DIRTY` means staged, unstaged, or untracked declared-source changes exist; `STALE+DIRTY` can
+report both. `UNVERIFIABLE` means the recorded commit is missing or is not an ancestor of
+HEAD. `UNVERIFIED` means metadata or a Git check could not be trusted. These labels validate
+metadata and change history only; they do not establish semantic correctness or source-list
+completeness.
 
 ### 4. Registry maintenance
 
