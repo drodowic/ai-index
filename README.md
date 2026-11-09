@@ -84,6 +84,8 @@ evidence must be checked in the other repo when a task relies on it; `related:` 
 not verification. `note-touch.sh` uses the active worktree when it shares the configured
 checkout's Git common directory; otherwise it uses the configured checkout. It refuses to stamp
 dirty declared sources, but the reviewer must still verify all retained claims before stamping.
+Status scans and note-touch recheck `HEAD` to catch commits during verification; this narrows the
+race but cannot prevent a commit immediately after the final check.
 
 For linked worktrees, status selects the unique existing note key among checkouts under the Git
 root. Multiple note keys, or multiple linked checkouts with no notes and no primary checkout

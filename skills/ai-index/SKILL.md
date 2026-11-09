@@ -138,6 +138,8 @@ scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>;
 
 `note-touch.sh` uses the active worktree when it shares the configured checkout's Git common
 directory; when invoked elsewhere, it uses the configured checkout.
+Status scans and note-touch recheck `HEAD`; this catches commits during verification but does not
+make the check atomic with concurrent Git writers.
 
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
 Merge history is conservative: a merge can mark an unchanged source `STALE`.

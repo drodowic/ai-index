@@ -96,6 +96,15 @@ if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
     exit 1
 fi
 
+if ! final_head_sha="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
+    echo "ai-index: cannot stamp ${note}: Git could not recheck HEAD after source verification" >&2
+    exit 1
+fi
+if [ "$head_sha" != "$final_head_sha" ]; then
+    echo "ai-index: cannot stamp ${note}: HEAD changed during source verification; no SHA was written, rerun note-touch.sh" >&2
+    exit 1
+fi
+
 today="$(date +%F)"
 
 fm_set "$note" sha "$head_sha"

@@ -478,6 +478,96 @@ EOF
 expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/conservative-merge")" 'STALE'
 expect_contains "$(bash "$STALE_SCRIPT" conservative-merge)" 'STALE'
 
+# A commit during stale-check must invalidate results computed against the earlier HEAD.
+mkdir -p "${TMP}/repos/race-stale/src" "${TMP}/vault/repos/race-stale"
+git -C "${TMP}/repos/race-stale" init -q
+git -C "${TMP}/repos/race-stale" config user.name 'ai-index tests'
+git -C "${TMP}/repos/race-stale" config user.email 'ai-index-tests@example.invalid'
+printf 'initial\n' >"${TMP}/repos/race-stale/src/source.txt"
+git -C "${TMP}/repos/race-stale" add .
+git -C "${TMP}/repos/race-stale" commit -qm 'race stale initial'
+RACE_STALE_SHA="$(git -C "${TMP}/repos/race-stale" rev-parse HEAD)"
+cat >"${TMP}/vault/repos/race-stale/overview.md" <<EOF
+---
+repo: race-stale
+sha: "${RACE_STALE_SHA}"
+sources:
+  - src/source.txt
+---
+EOF
+
+# A commit after note-touch captures HEAD must prevent it from stamping that old SHA.
+mkdir -p "${TMP}/repos/race-touch/src" "${TMP}/vault/repos/race-touch" "${TMP}/race-bin"
+git -C "${TMP}/repos/race-touch" init -q
+git -C "${TMP}/repos/race-touch" config user.name 'ai-index tests'
+git -C "${TMP}/repos/race-touch" config user.email 'ai-index-tests@example.invalid'
+printf 'initial\n' >"${TMP}/repos/race-touch/src/source.txt"
+git -C "${TMP}/repos/race-touch" add .
+git -C "${TMP}/repos/race-touch" commit -qm 'race touch initial'
+RACE_TOUCH_SHA="$(git -C "${TMP}/repos/race-touch" rev-parse HEAD)"
+cat >"${TMP}/vault/repos/race-touch/overview.md" <<EOF
+---
+repo: race-touch
+sha: "${RACE_TOUCH_SHA}"
+sources:
+  - src/source.txt
+---
+EOF
+
+RACE_REAL_GIT="$(command -v git)"
+cat >"${TMP}/race-bin/git" <<'EOF'
+#!/usr/bin/env bash
+case "${AI_INDEX_RACE_KIND:-}" in
+    stale)
+        case " $* " in
+            *' rev-list --full-history --count '*)
+                if [ ! -e "$AI_INDEX_RACE_MARKER" ]; then
+                    : >"$AI_INDEX_RACE_MARKER"
+                    printf 'concurrent source change\n' >>"${AI_INDEX_RACE_REPO}/${AI_INDEX_RACE_SOURCE}"
+                    "$AI_INDEX_TEST_REAL_GIT" -C "$AI_INDEX_RACE_REPO" add "$AI_INDEX_RACE_SOURCE"
+                    "$AI_INDEX_TEST_REAL_GIT" -C "$AI_INDEX_RACE_REPO" commit -qm 'concurrent stale-check source change'
+                fi
+                ;;
+        esac
+        ;;
+    touch)
+        case " $* " in
+            *' ls-files -v --stage -z '*)
+                if [ ! -e "$AI_INDEX_RACE_MARKER" ]; then
+                    : >"$AI_INDEX_RACE_MARKER"
+                    printf 'concurrent source change\n' >>"${AI_INDEX_RACE_REPO}/${AI_INDEX_RACE_SOURCE}"
+                    "$AI_INDEX_TEST_REAL_GIT" -C "$AI_INDEX_RACE_REPO" add "$AI_INDEX_RACE_SOURCE"
+                    "$AI_INDEX_TEST_REAL_GIT" -C "$AI_INDEX_RACE_REPO" commit -qm 'concurrent note-touch source change'
+                fi
+                ;;
+        esac
+        ;;
+esac
+exec "$AI_INDEX_TEST_REAL_GIT" "$@"
+EOF
+chmod +x "${TMP}/race-bin/git"
+AI_INDEX_TEST_REAL_GIT="$RACE_REAL_GIT" AI_INDEX_RACE_KIND=stale \
+    AI_INDEX_RACE_REPO="${TMP}/repos/race-stale" AI_INDEX_RACE_SOURCE=src/source.txt \
+    AI_INDEX_RACE_MARKER="${TMP}/race-stale-fired" PATH="${TMP}/race-bin:$PATH" \
+    bash "$STALE_SCRIPT" race-stale >"${TMP}/race-stale.out"
+expect_contains "$(cat "${TMP}/race-stale.out")" 'UNVERIFIED'
+expect_contains "$(cat "${TMP}/race-stale.out")" 'HEAD changed or could not be verified during status scan'
+[[ "$(git -C "${TMP}/repos/race-stale" rev-parse HEAD)" != "$RACE_STALE_SHA" ]] || \
+    fail 'stale-check race fixture did not commit during the scan'
+
+BEFORE_RACE_TOUCH="$(sha256sum "${TMP}/vault/repos/race-touch/overview.md")"
+if AI_INDEX_TEST_REAL_GIT="$RACE_REAL_GIT" AI_INDEX_RACE_KIND=touch \
+    AI_INDEX_RACE_REPO="${TMP}/repos/race-touch" AI_INDEX_RACE_SOURCE=src/source.txt \
+    AI_INDEX_RACE_MARKER="${TMP}/race-touch-fired" PATH="${TMP}/race-bin:$PATH" \
+    bash "$TOUCH_SCRIPT" "${TMP}/vault/repos/race-touch/overview.md" >"${TMP}/race-touch.out" 2>&1; then
+    fail 'note-touch accepted a concurrent source commit'
+fi
+expect_contains "$(cat "${TMP}/race-touch.out")" 'HEAD changed during source verification'
+[[ "$(sha256sum "${TMP}/vault/repos/race-touch/overview.md")" == "$BEFORE_RACE_TOUCH" ]] || \
+    fail 'note-touch stamped a SHA after HEAD moved'
+[[ "$(git -C "${TMP}/repos/race-touch" rev-parse HEAD)" != "$RACE_TOUCH_SHA" ]] || \
+    fail 'note-touch race fixture did not commit during verification'
+
 # Plugin reminder stays short and preserves the key workflow guardrails.
 GUIDANCE="$(sed -n '/const AI_INDEX_GUIDANCE = \[/,/\].join/p' "$PLUGIN" | tr -d '\n')"
 [[ ${#GUIDANCE} -lt 700 ]] || fail "plugin guidance is not concise (${#GUIDANCE} chars)"

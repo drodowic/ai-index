@@ -59,12 +59,35 @@ if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/de
     exit 0
 fi
 
-printf '%-35s %-10s %-12s %s\n' "note" "sha" "status" "detail"
-while IFS= read -r -d '' note; do
+mapfile -d '' -t note_paths < <(find "$notes_dir" -type f -name '*.md' -print0 | sort -z)
+snapshot_head="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+AI_INDEX_SNAPSHOT_HEAD="$snapshot_head"
+note_names=()
+note_shas=()
+note_statuses=()
+note_details=()
+for note in "${note_paths[@]}"; do
     rel="${note#"${notes_dir}"/}"
     rel="${rel%.md}"
     ai_index_check_note "$toplevel" "$note" "$repo"
     note_sha="${AI_NOTE_SHA:0:7}"
     [ -n "$note_sha" ] || note_sha="-"
-    printf '%-35s %-10s %-12s %s\n' "$rel" "$note_sha" "$AI_NOTE_STATUS" "$AI_NOTE_DETAIL"
-done < <(find "$notes_dir" -type f -name '*.md' -print0 | sort -z)
+    note_names+=("$rel")
+    note_shas+=("$note_sha")
+    note_statuses+=("$AI_NOTE_STATUS")
+    note_details+=("$AI_NOTE_DETAIL")
+done
+
+final_head="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+if [ -z "$snapshot_head" ] || [ "$snapshot_head" != "$final_head" ]; then
+    for ((i=0; i<${#note_statuses[@]}; i++)); do
+        note_statuses[i]=UNVERIFIED
+        note_details[i]='HEAD changed or could not be verified during status scan'
+    done
+fi
+
+printf '%-35s %-10s %-12s %s\n' "note" "sha" "status" "detail"
+for ((i=0; i<${#note_names[@]}; i++)); do
+    printf '%-35s %-10s %-12s %s\n' \
+        "${note_names[i]}" "${note_shas[i]}" "${note_statuses[i]}" "${note_details[i]}"
+done
