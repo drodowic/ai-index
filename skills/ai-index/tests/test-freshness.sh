@@ -171,6 +171,18 @@ expect_status UNVERIFIED
 write_note "$(printf '%40s' '' | tr ' ' f)"
 expect_status UNVERIFIABLE
 
+# Git-valid abbreviated commit SHAs remain accepted; malformed short values do not.
+SHORT_SHA="$(git rev-parse --short HEAD)"
+write_note "$SHORT_SHA"
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'fresh'
+printf 'abbreviated SHA source change\n' >>'src/path with spaces.txt'
+git add 'src/path with spaces.txt'
+git commit -qm 'change source after abbreviated note SHA'
+expect_status STALE
+write_note abc
+expect_status UNVERIFIED
+
 ORPHAN_TREE="$(git mktree </dev/null)"
 ORPHAN_SHA="$(printf 'orphan commit\n' | git commit-tree "$ORPHAN_TREE")"
 write_note "$ORPHAN_SHA"

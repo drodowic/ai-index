@@ -30,7 +30,7 @@ ai_index_load_note_metadata() {
     AI_NOTE_SHA="$(jq -r '.sha // ""' <<<"$metadata")"
     mapfile -t AI_NOTE_SOURCES < <(jq -r '.sources[]' <<<"$metadata")
 
-    if [ "$require_sha" = yes ] && [[ ! "$AI_NOTE_SHA" =~ ^([[:xdigit:]]{40}|[[:xdigit:]]{64})$ ]]; then
+    if [ "$require_sha" = yes ] && [[ ! "$AI_NOTE_SHA" =~ ^[[:xdigit:]]{4,64}$ ]]; then
         AI_NOTE_REASON="missing or invalid recorded commit SHA"
         return 1
     fi
@@ -94,7 +94,7 @@ ai_index_check_note() {
         return 0
     fi
 
-    if git -C "$repo_root" merge-base --is-ancestor "$AI_NOTE_SHA" "$head_sha" 2>/dev/null; then
+    if git -C "$repo_root" merge-base --is-ancestor "$resolved_sha" "$head_sha" 2>/dev/null; then
         ancestor_status=0
     else
         ancestor_status=$?
@@ -109,7 +109,7 @@ ai_index_check_note() {
     fi
 
     ai_index_pathspecs
-    if ! committed="$(git -C "$repo_root" rev-list --count "${AI_NOTE_SHA}..${head_sha}" -- "${AI_NOTE_PATHS[@]}" 2>/dev/null)" || \
+    if ! committed="$(git -C "$repo_root" rev-list --count "${resolved_sha}..${head_sha}" -- "${AI_NOTE_PATHS[@]}" 2>/dev/null)" || \
         [[ ! "$committed" =~ ^[0-9]+$ ]]; then
         AI_NOTE_DETAIL="Git could not inspect committed source changes"
         return 0
