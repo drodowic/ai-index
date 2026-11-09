@@ -28,6 +28,44 @@ ai_index_git_common_dir() {
     (cd "$common_dir" 2>/dev/null && pwd -P)
 }
 
+ai_index_resolve_repo_key() {
+    local repo_root="$1" git_root="$2" fallback="$3"
+    local configured_top configured_real target_real git_root_real worktrees line worktree_path worktree_real relative
+    AI_INDEX_REPO_KEY="$fallback"
+
+    # The common case is the configured checkout itself; avoid listing worktrees.
+    if configured_top="$(git -C "${git_root}/${fallback}" rev-parse --show-toplevel 2>/dev/null)"; then
+        if configured_real="$(cd "$configured_top" 2>/dev/null && pwd -P)" && \
+            target_real="$(cd "$repo_root" 2>/dev/null && pwd -P)" && \
+            [ "$configured_real" = "$target_real" ]; then
+            return 0
+        fi
+    fi
+
+    if ! git_root_real="$(cd "$git_root" 2>/dev/null && pwd -P)" || \
+        ! worktrees="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null)"; then
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*) worktree_path="${line#worktree }" ;;
+            *) continue ;;
+        esac
+        [ -d "$worktree_path" ] || continue
+        worktree_real="$(cd "$worktree_path" 2>/dev/null && pwd -P || true)"
+        case "$worktree_real" in
+            "${git_root_real}"/*) relative="${worktree_real#"${git_root_real}"/}" ;;
+            *) continue ;;
+        esac
+        if [ -n "$relative" ] && [[ "$relative" != */* ]]; then
+            AI_INDEX_REPO_KEY="$relative"
+            return 0
+        fi
+    done <<<"$worktrees"
+    return 0
+}
+
 declare -A AI_INDEX_HISTORY_CACHE=()
 
 ai_index_load_note_metadata() {

@@ -309,12 +309,17 @@ ACTIVE_SHA="$(git -C "${TMP}/worktree-roots/wt-active" rev-parse HEAD)"
 )
 TOUCHED_WORKTREE_SHA="$(yq --front-matter=extract '.sha' "${TMP}/vault/repos/wt-demo/overview.md")"
 [[ "$TOUCHED_WORKTREE_SHA" == "$ACTIVE_SHA" ]] || fail 'note-touch stamped configured checkout instead of active worktree'
-
-# Git's submodule ignore=all must not hide edits under a declared source directory.
+write_directory_note "$ACTIVE_SHA"
 cat >"${HOME}/.config/opencode/ai-index.env" <<EOF
 AI_INDEX_DOCS_ROOT='${AI_INDEX_DOCS_ROOT}'
 AI_INDEX_GIT_ROOT='${TMP}/repos'
 EOF
+ACTIVE_STATUS="$(bash "$STATUS_SCRIPT" "${TMP}/worktree-roots/wt-active")"
+expect_contains "$ACTIVE_STATUS" 'repo=demo'
+expect_contains "$ACTIVE_STATUS" 'notes: overview'
+expect_contains "$ACTIVE_STATUS" '1 fresh, 0 needing review'
+
+# Git's submodule ignore=all must not hide edits under a declared source directory.
 mkdir -p "${TMP}/submodule-source"
 git -C "${TMP}/submodule-source" init -q
 git -C "${TMP}/submodule-source" config user.name 'ai-index tests'

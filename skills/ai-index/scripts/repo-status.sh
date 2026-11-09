@@ -49,7 +49,12 @@ if ! toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)"; then
     exit 0
 fi
 
-repo="$(basename "$toplevel")"
+repo_fallback="$(basename "$toplevel")"
+if ! ai_index_resolve_repo_key "$toplevel" "$AI_INDEX_GIT_ROOT" "$repo_fallback"; then
+    echo "[ai-index] repo=${repo_fallback} UNVERIFIED: Git could not identify the configured worktree"
+    exit 0
+fi
+repo="$AI_INDEX_REPO_KEY"
 branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
 head_sha="$(git -C "$toplevel" rev-parse --short HEAD 2>/dev/null || echo "?")"
 notes_dir="${INDEX_ROOT}/repos/${repo}"
