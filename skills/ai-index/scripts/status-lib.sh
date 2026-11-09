@@ -1,34 +1,91 @@
 #!/usr/bin/env bash
 # Shared conservative note-freshness checks for repo-status.sh and stale-check.sh.
 
+AI_INDEX_SCRATCH_DIR=""
+AI_INDEX_SCRATCH=""
+AI_INDEX_SNAPSHOT_HEAD=""
+
+# Each caller or worker owns its scratch file. Never share it between concurrent checks.
+ai_index_init_scratch() {
+    AI_INDEX_SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ai-index-status.XXXXXX")" || return 1
+    AI_INDEX_SCRATCH="${AI_INDEX_SCRATCH_DIR}/output"
+}
+
+ai_index_cleanup_scratch() {
+    [ -n "${AI_INDEX_SCRATCH_DIR:-}" ] || return 0
+    rm -f "${AI_INDEX_SCRATCH_DIR}"/*
+    rmdir "$AI_INDEX_SCRATCH_DIR" 2>/dev/null || true
+}
+
+declare -A AI_INDEX_HISTORY_CACHE=()
+
 ai_index_load_note_metadata() {
     local note="$1" expected_repo="$2" require_sha="${3:-yes}" metadata required_fields="repo, sources"
+    local -a fields=()
+    local related_count source_count
     [ "$require_sha" = yes ] && required_fields+=", sha"
 
     AI_NOTE_REPO=""
     AI_NOTE_SHA=""
     AI_NOTE_SOURCES=()
     AI_NOTE_REASON=""
+    AI_NOTE_RELATED=()
+    AI_NOTE_RELATED_LOADED=no
 
     if ! metadata="$(yq --front-matter=extract -o=json '.' "$note" 2>/dev/null)" || \
-        ! jq -e --arg repo "$expected_repo" --arg require_sha "$require_sha" '
-            type == "object" and
-            .repo == $repo and
-            (if $require_sha == "yes" then (.sha | type == "string" and length > 0) else true end) and
-            (.sources | type == "array" and length > 0) and
-            all(.sources[];
-                type == "string" and length > 0 and
-                (startswith("/") | not) and
-                (((if endswith("/") then .[0:-1] else . end) | split("/") | any(. == ".." or . == "")) | not)
-            )
-        ' >/dev/null <<<"$metadata"; then
+        ! jq -j --arg repo "$expected_repo" --arg require_sha "$require_sha" '
+            def valid:
+                type == "object" and .repo == $repo and
+                (if $require_sha == "yes" then (.sha | type == "string" and length > 0) else true end) and
+                (.sources | type == "array" and length > 0) and
+                all(.sources[];
+                    type == "string" and length > 0 and
+                    (contains("\u0000") | not) and (startswith("/") | not) and
+                    (((if endswith("/") then .[0:-1] else . end) | split("/") | any(. == ".." or . == "")) | not)
+                );
+            def simple_related:
+                type == "object" and
+                ((.related == null) or (.related | type == "array" and
+                    all(.[]; type == "string" and (contains("\u0000") | not) and (contains("\n") | not))));
+            (if simple_related then
+                "related\u0000", ((.related // []) | length | tostring), "\u0000",
+                ((.related // [])[] | ., "\u0000")
+             else "fallback\u0000", "0\u0000" end),
+            (if valid then
+                "valid\u0000", (if $require_sha == "yes" then .sha else "" end), "\u0000",
+                (.sources | length | tostring), "\u0000", (.sources[] | ., "\u0000")
+             else "invalid\u0000" end), "end\u0000"
+        ' >"$AI_INDEX_SCRATCH" 2>/dev/null <<<"$metadata"; then
         AI_NOTE_REASON="invalid or incomplete frontmatter (${required_fields})"
         return 1
     fi
 
-    AI_NOTE_REPO="$(jq -r '.repo' <<<"$metadata")"
-    AI_NOTE_SHA="$(jq -r '.sha // ""' <<<"$metadata")"
-    mapfile -t AI_NOTE_SOURCES < <(jq -r '.sources[]' <<<"$metadata")
+    if ! mapfile -d '' -t fields <"$AI_INDEX_SCRATCH"; then
+        AI_NOTE_REASON="could not read parsed frontmatter"
+        return 1
+    fi
+    if [ "${#fields[@]}" -lt 4 ] || [ "${fields[-1]}" != end ] || [[ ! "${fields[1]}" =~ ^[0-9]+$ ]]; then
+        AI_NOTE_REASON="invalid or incomplete frontmatter (${required_fields})"
+        return 1
+    fi
+    related_count="${fields[1]}"
+    if [ "${fields[0]}" = related ]; then
+        AI_NOTE_RELATED=("${fields[@]:2:related_count}")
+        AI_NOTE_RELATED_LOADED=yes
+    fi
+    fields=("${fields[@]:2+related_count}")
+    if [ "${fields[0]:-}" != valid ] || [ "${#fields[@]}" -lt 4 ] || [[ ! "${fields[2]}" =~ ^[0-9]+$ ]]; then
+        AI_NOTE_REASON="invalid or incomplete frontmatter (${required_fields})"
+        return 1
+    fi
+    source_count="${fields[2]}"
+    if [ "${#fields[@]}" -ne "$((source_count + 4))" ]; then
+        AI_NOTE_REASON="invalid or incomplete frontmatter (${required_fields})"
+        return 1
+    fi
+    AI_NOTE_REPO="$expected_repo"
+    AI_NOTE_SHA="${fields[1]}"
+    AI_NOTE_SOURCES=("${fields[@]:3:source_count}")
 
     if [ "$require_sha" = yes ] && [[ ! "$AI_NOTE_SHA" =~ ^[[:xdigit:]]{4,64}$ ]]; then
         AI_NOTE_REASON="missing or invalid recorded commit SHA"
@@ -49,14 +106,11 @@ ai_index_pathspecs() {
 # Count NUL-terminated path output without breaking on spaces or unusual filenames.
 ai_index_git_path_count() {
     local repo_root="$1"; shift
-    local output_file count
-    output_file="$(mktemp "${TMPDIR:-/tmp}/ai-index-status.XXXXXX")" || return 1
-    if ! git -C "$repo_root" "$@" >"$output_file" 2>/dev/null; then
-        rm -f "$output_file"
+    local path count=0
+    if ! git -C "$repo_root" "$@" >"$AI_INDEX_SCRATCH" 2>/dev/null; then return 1; fi
+    if ! while IFS= read -r -d '' path; do count=$((count + 1)); done <"$AI_INDEX_SCRATCH"; then
         return 1
     fi
-    count="$(tr -cd '\000' <"$output_file" | wc -c | tr -d '[:space:]')"
-    rm -f "$output_file"
     printf '%s\n' "$count"
 }
 
@@ -94,36 +148,44 @@ ai_index_check_note() {
         return 0
     fi
 
-    if ! head_sha="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
+    if [ -n "${AI_INDEX_SNAPSHOT_HEAD:-}" ]; then
+        head_sha="$AI_INDEX_SNAPSHOT_HEAD"
+    elif ! head_sha="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
         AI_NOTE_DETAIL="Git could not resolve HEAD"
         return 0
     fi
     local resolved_sha resolve_status
-    if resolved_sha="$(git -C "$repo_root" rev-parse --verify --quiet "${AI_NOTE_SHA}^{commit}" 2>/dev/null)"; then
-        :
-    else
-        resolve_status=$?
-        if [ "$resolve_status" -eq 1 ]; then
-            AI_NOTE_STATUS="UNVERIFIABLE"
-            AI_NOTE_DETAIL="recorded commit not found"
+    resolved_sha="${AI_INDEX_HISTORY_CACHE[$AI_NOTE_SHA]:-}"
+    if [ -z "$resolved_sha" ]; then
+        if resolved_sha="$(git -C "$repo_root" rev-parse --verify --quiet "${AI_NOTE_SHA}^{commit}" 2>/dev/null)"; then
+            :
         else
-            AI_NOTE_DETAIL="Git could not resolve the recorded commit"
+            resolve_status=$?
+            if [ "$resolve_status" -eq 1 ]; then
+                AI_NOTE_STATUS="UNVERIFIABLE"
+                AI_NOTE_DETAIL="recorded commit not found"
+            else
+                AI_NOTE_DETAIL="Git could not resolve the recorded commit"
+            fi
+            return 0
         fi
-        return 0
-    fi
 
-    if git -C "$repo_root" merge-base --is-ancestor "$resolved_sha" "$head_sha" 2>/dev/null; then
-        ancestor_status=0
-    else
-        ancestor_status=$?
-    fi
-    if [ "$ancestor_status" -eq 1 ]; then
-        AI_NOTE_STATUS="UNVERIFIABLE"
-        AI_NOTE_DETAIL="recorded commit is not an ancestor of HEAD"
-        return 0
-    elif [ "$ancestor_status" -ne 0 ]; then
-        AI_NOTE_DETAIL="Git could not check commit ancestry"
-        return 0
+        if git -C "$repo_root" merge-base --is-ancestor "$resolved_sha" "$head_sha" 2>/dev/null; then
+            ancestor_status=0
+        else
+            ancestor_status=$?
+        fi
+        if [ "$ancestor_status" -eq 1 ]; then
+            AI_NOTE_STATUS="UNVERIFIABLE"
+            AI_NOTE_DETAIL="recorded commit is not an ancestor of HEAD"
+            return 0
+        elif [ "$ancestor_status" -ne 0 ]; then
+            AI_NOTE_DETAIL="Git could not check commit ancestry"
+            return 0
+        fi
+        if [ -n "${AI_INDEX_SNAPSHOT_HEAD:-}" ]; then
+            AI_INDEX_HISTORY_CACHE[$AI_NOTE_SHA]="$resolved_sha"
+        fi
     fi
 
     ai_index_pathspecs

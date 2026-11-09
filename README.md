@@ -87,9 +87,20 @@ Run the isolated shell tests with:
 
 ```bash
 bash skills/ai-index/tests/test-freshness.sh
+bash skills/ai-index/tests/test-status-parallel.sh
 ```
 
 The tests use temporary Git repositories, config, and vault data; they require Bash, Git, `jq`,
 and mikefarah `yq` v4 or newer, and do not access the network or the configured user vault.
 Paired accuracy evaluation was not run in this implementation pass. No personal-vault evaluation
 data is included in this repository.
+
+Optionally benchmark the complete status digest for 250 notes with two sources each:
+
+```bash
+bash skills/ai-index/tests/bench-repo-status.sh          # report three runs
+bash skills/ai-index/tests/bench-repo-status.sh --check  # require each run below 5 seconds
+```
+
+The benchmark also requires Node.js and uses the plugin's 10-second subprocess timeout.
+Timings depend on hardware, repository size, and system load; the limit is not a guarantee.

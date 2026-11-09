@@ -13,6 +13,11 @@ ai_index_load_config
 fm_require_tools
 # shellcheck source=status-lib.sh
 source "${SCRIPT_DIR}/status-lib.sh"
+if ! ai_index_init_scratch; then
+    echo 'ai-index: cannot create temporary status workspace' >&2
+    exit 1
+fi
+trap ai_index_cleanup_scratch EXIT
 
 GIT_ROOT="${AI_INDEX_GIT_ROOT}"
 
