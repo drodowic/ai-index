@@ -75,12 +75,10 @@ claims are correct or that the source list is complete. Each source path must ma
 content at the recorded commit; a typo or absent path is `UNVERIFIED`. `STALE` means committed
 source changes; `DIRTY` means staged, unstaged, or non-ignored untracked source changes.
 Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY` reports both.
-Declared submodules are checked recursively, overriding each level's submodule-ignore setting.
 Merge history is checked conservatively, so a merge can mark an unchanged source `STALE`.
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
 means metadata/source-path validation failed, a declared source has an `assume-unchanged` or
-`skip-worktree` index flag, a declared submodule is unavailable, or a Git check could not be
-trusted. Index flags are also checked inside nested declared submodules. Cross-repo
+`skip-worktree` index flag, or a Git check could not be trusted. Cross-repo
 evidence must be checked in the other repo when a task relies on it; `related:` is navigation,
 not verification. `note-touch.sh` uses the active worktree when it shares the configured
 checkout's Git common directory; otherwise it uses the configured checkout. It refuses to stamp
@@ -100,7 +98,7 @@ Run the isolated shell tests with:
 ```bash
 bash skills/ai-index/tests/test-freshness.sh
 bash skills/ai-index/tests/test-status-parallel.sh
-bash skills/ai-index/tests/test-worktree-submodules.sh
+bash skills/ai-index/tests/test-worktree-status.sh
 ```
 
 The tests use temporary Git repositories, config, and vault data; they require Bash, Git, `jq`,

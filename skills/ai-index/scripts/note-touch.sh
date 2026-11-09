@@ -75,13 +75,9 @@ else
     exit 1
 fi
 
-if ! flag_result="$(ai_index_flagged_source_count "$toplevel" "${AI_NOTE_PATHS[@]}")"; then
-    echo "ai-index: cannot verify ${note}: Git could not inspect declared source index flags or a declared submodule is unavailable" >&2
-    exit 1
-fi
-read -r flagged submodule_dirty <<<"$flag_result"
-if [[ ! "$flagged" =~ ^[0-9]+$ || ! "$submodule_dirty" =~ ^[0-9]+$ ]]; then
-    echo "ai-index: cannot verify ${note}: Git returned invalid declared source index status" >&2
+if ! flagged="$(ai_index_flagged_source_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
+    [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
+    echo "ai-index: cannot verify ${note}: Git could not inspect declared source index flags" >&2
     exit 1
 fi
 if [ "$flagged" -gt 0 ]; then
@@ -93,11 +89,6 @@ if ! staged="$(ai_index_staged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" ||
     ! unstaged="$(ai_index_unstaged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
     ! untracked="$(ai_index_untracked_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")"; then
     echo "ai-index: cannot verify ${note}: Git could not inspect declared sources" >&2
-    exit 1
-fi
-if [ "$submodule_dirty" -gt 0 ] && [ "$staged" -eq 0 ] && \
-    [ "$unstaged" -eq 0 ] && [ "$untracked" -eq 0 ]; then
-    echo "ai-index: cannot stamp ${note}: nested declared submodule sources have uncommitted changes; commit or restore them, review all claims, then run note-touch.sh again" >&2
     exit 1
 fi
 if [ "$staged" -gt 0 ] || [ "$unstaged" -gt 0 ] || [ "$untracked" -gt 0 ]; then
