@@ -310,6 +310,44 @@ ACTIVE_SHA="$(git -C "${TMP}/worktree-roots/wt-active" rev-parse HEAD)"
 TOUCHED_WORKTREE_SHA="$(yq --front-matter=extract '.sha' "${TMP}/vault/repos/wt-demo/overview.md")"
 [[ "$TOUCHED_WORKTREE_SHA" == "$ACTIVE_SHA" ]] || fail 'note-touch stamped configured checkout instead of active worktree'
 
+# Git's submodule ignore=all must not hide edits under a declared source directory.
+cat >"${HOME}/.config/opencode/ai-index.env" <<EOF
+AI_INDEX_DOCS_ROOT='${AI_INDEX_DOCS_ROOT}'
+AI_INDEX_GIT_ROOT='${TMP}/repos'
+EOF
+mkdir -p "${TMP}/submodule-source"
+git -C "${TMP}/submodule-source" init -q
+git -C "${TMP}/submodule-source" config user.name 'ai-index tests'
+git -C "${TMP}/submodule-source" config user.email 'ai-index-tests@example.invalid'
+printf 'submodule source\n' >"${TMP}/submodule-source/source.txt"
+git -C "${TMP}/submodule-source" add .
+git -C "${TMP}/submodule-source" commit -qm 'initial submodule source'
+git -C "${TMP}/repos/demo" -c protocol.file.allow=always submodule add -q \
+    "${TMP}/submodule-source" src/ignored-submodule
+git -C "${TMP}/repos/demo" config -f .gitmodules submodule.src/ignored-submodule.ignore all
+git -C "${TMP}/repos/demo" add .gitmodules src/ignored-submodule
+git -C "${TMP}/repos/demo" commit -qm 'add ignored submodule source'
+write_directory_note "$(git -C "${TMP}/repos/demo" rev-parse HEAD)"
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/demo")" '1 fresh, 0 needing review'
+printf 'modified in submodule\n' >>"${TMP}/repos/demo/src/ignored-submodule/source.txt"
+if git -C "${TMP}/repos/demo" diff --quiet -- src/ignored-submodule; then
+    : # Ensure the fixture reproduces Git's ignore=all behavior.
+else
+    fail 'submodule fixture is not hidden by ignore=all'
+fi
+if git -C "${TMP}/repos/demo" diff --ignore-submodules=none --quiet -- src/ignored-submodule; then
+    fail 'forced submodule diff failed to detect the fixture edit'
+fi
+expect_status DIRTY
+expect_contains "$(bash "$STALE_SCRIPT" demo)" 'unstaged=1'
+BEFORE_SUBMODULE_TOUCH="$(sha256sum "${TMP}/vault/repos/demo/overview.md")"
+if bash "$TOUCH_SCRIPT" "${TMP}/vault/repos/demo/overview.md" >"${TMP}/submodule-touch.out" 2>&1; then
+    fail 'note-touch accepted a modified ignored submodule'
+fi
+expect_contains "$(cat "${TMP}/submodule-touch.out")" 'uncommitted changes'
+[[ "$(sha256sum "${TMP}/vault/repos/demo/overview.md")" == "$BEFORE_SUBMODULE_TOUCH" ]] || \
+    fail 'note-touch modified metadata for a dirty submodule'
+
 # Plugin reminder stays short and preserves the key workflow guardrails.
 GUIDANCE="$(sed -n '/const AI_INDEX_GUIDANCE = \[/,/\].join/p' "$PLUGIN" | tr -d '\n')"
 [[ ${#GUIDANCE} -lt 700 ]] || fail "plugin guidance is not concise (${#GUIDANCE} chars)"

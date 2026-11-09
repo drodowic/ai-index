@@ -75,8 +75,8 @@ else
     exit 1
 fi
 
-if ! staged="$(ai_index_git_path_count "$toplevel" diff --cached --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
-    ! unstaged="$(ai_index_git_path_count "$toplevel" diff --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
+if ! staged="$(ai_index_staged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
+    ! unstaged="$(ai_index_unstaged_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
     ! untracked="$(ai_index_untracked_path_count "$toplevel" "${AI_NOTE_PATHS[@]}")"; then
     echo "ai-index: cannot verify ${note}: Git could not inspect declared sources" >&2
     exit 1

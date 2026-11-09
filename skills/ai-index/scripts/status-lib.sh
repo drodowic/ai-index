@@ -125,6 +125,16 @@ ai_index_git_path_count() {
     printf '%s\n' "$count"
 }
 
+ai_index_staged_path_count() {
+    local repo_root="$1"; shift
+    ai_index_git_path_count "$repo_root" diff --cached --ignore-submodules=none --name-only -z -- "$@"
+}
+
+ai_index_unstaged_path_count() {
+    local repo_root="$1"; shift
+    ai_index_git_path_count "$repo_root" diff --ignore-submodules=none --name-only -z -- "$@"
+}
+
 ai_index_untracked_path_count() {
     local repo_root="$1"; shift
     ai_index_git_path_count "$repo_root" ls-files --others --exclude-standard -z -- "$@"
@@ -218,8 +228,8 @@ ai_index_check_note() {
         return 0
     fi
 
-    if ! staged="$(ai_index_git_path_count "$repo_root" diff --cached --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
-        ! unstaged="$(ai_index_git_path_count "$repo_root" diff --name-only -z -- "${AI_NOTE_PATHS[@]}")" || \
+    if ! staged="$(ai_index_staged_path_count "$repo_root" "${AI_NOTE_PATHS[@]}")" || \
+        ! unstaged="$(ai_index_unstaged_path_count "$repo_root" "${AI_NOTE_PATHS[@]}")" || \
         ! untracked="$(ai_index_untracked_path_count "$repo_root" "${AI_NOTE_PATHS[@]}")"; then
         AI_NOTE_DETAIL="Git could not inspect uncommitted source changes"
         return 0
