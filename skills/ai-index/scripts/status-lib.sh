@@ -17,6 +17,17 @@ ai_index_cleanup_scratch() {
     rmdir "$AI_INDEX_SCRATCH_DIR" 2>/dev/null || true
 }
 
+ai_index_git_common_dir() {
+    local repo_root="$1" common_dir
+    if ! common_dir="$(git -C "$repo_root" rev-parse --git-common-dir 2>/dev/null)"; then
+        return 1
+    fi
+    if [[ "$common_dir" != /* ]]; then
+        common_dir="${repo_root}/${common_dir}"
+    fi
+    (cd "$common_dir" 2>/dev/null && pwd -P)
+}
+
 declare -A AI_INDEX_HISTORY_CACHE=()
 
 ai_index_load_note_metadata() {

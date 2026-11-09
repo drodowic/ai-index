@@ -136,6 +136,9 @@ clean and committed before stamping it:
 scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>; refuses dirty sources
 ```
 
+`note-touch.sh` uses the active worktree when it shares the configured checkout's Git common
+directory; when invoked elsewhere, it uses the configured checkout.
+
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
 `DIRTY` means staged, unstaged, or non-ignored untracked declared-source changes exist; Git-ignored
 artifacts do not count. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is

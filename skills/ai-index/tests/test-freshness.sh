@@ -292,6 +292,24 @@ expect_contains "$(cat "${TMP}/worktree-stale.out")" 'STALE'
 bash "$STATUS_SCRIPT" "${TMP}/worktree-roots/wt-demo" >"${TMP}/worktree-status.out"
 expect_contains "$(cat "${TMP}/worktree-status.out")" 'STALE'
 
+# note-touch prefers the active worktree when it shares the configured checkout's Git common dir.
+git -C "${TMP}/worktree-roots/wt-demo" worktree add -q \
+    "${TMP}/worktree-roots/wt-active" -b ai-index-test-active
+git -C "${TMP}/worktree-roots/wt-active" config user.name 'ai-index tests'
+git -C "${TMP}/worktree-roots/wt-active" config user.email 'ai-index-tests@example.invalid'
+printf 'active worktree change\n' >>"${TMP}/worktree-roots/wt-active/src/path with spaces.txt"
+git -C "${TMP}/worktree-roots/wt-active" add 'src/path with spaces.txt'
+git -C "${TMP}/worktree-roots/wt-active" commit -qm 'active worktree change'
+CONFIGURED_SHA="$(git -C "${TMP}/worktree-roots/wt-demo" rev-parse HEAD)"
+ACTIVE_SHA="$(git -C "${TMP}/worktree-roots/wt-active" rev-parse HEAD)"
+[[ "$CONFIGURED_SHA" != "$ACTIVE_SHA" ]] || fail 'worktree fixture did not create different HEADs'
+(
+    cd "${TMP}/worktree-roots/wt-active"
+    bash "$TOUCH_SCRIPT" "${TMP}/vault/repos/wt-demo/overview.md" >/dev/null
+)
+TOUCHED_WORKTREE_SHA="$(yq --front-matter=extract '.sha' "${TMP}/vault/repos/wt-demo/overview.md")"
+[[ "$TOUCHED_WORKTREE_SHA" == "$ACTIVE_SHA" ]] || fail 'note-touch stamped configured checkout instead of active worktree'
+
 # Plugin reminder stays short and preserves the key workflow guardrails.
 GUIDANCE="$(sed -n '/const AI_INDEX_GUIDANCE = \[/,/\].join/p' "$PLUGIN" | tr -d '\n')"
 [[ ${#GUIDANCE} -lt 700 ]] || fail "plugin guidance is not concise (${#GUIDANCE} chars)"

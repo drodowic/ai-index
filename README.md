@@ -78,8 +78,9 @@ Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY`
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
 means metadata/source-path validation failed or a Git check could not be trusted. Cross-repo
 evidence must be checked in the other repo when a task relies on it; `related:` is navigation,
-not verification. `note-touch.sh` refuses to stamp a note while declared sources are dirty, but
-the reviewer must still verify all retained claims before stamping.
+not verification. `note-touch.sh` uses the active worktree when it shares the configured
+checkout's Git common directory; otherwise it uses the configured checkout. It refuses to stamp
+dirty declared sources, but the reviewer must still verify all retained claims before stamping.
 
 ## Tests and evaluation
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# note-touch.sh - mark a note freshly verified: sets sha to the named repo's current HEAD
+# note-touch.sh - mark a note freshly verified: sets sha to its active matching worktree HEAD,
+# or the configured checkout's HEAD when no matching worktree is active.
 # and verified to today's date. Leaves the rest of the note (frontmatter and body) untouched.
 #
 # Usage: note-touch.sh <note-path>
@@ -33,10 +34,22 @@ if [ -z "$repo" ]; then
     exit 1
 fi
 
-toplevel="${GIT_ROOT}/${repo}"
-if ! toplevel="$(git -C "$toplevel" rev-parse --show-toplevel 2>/dev/null)"; then
+configured_root="${GIT_ROOT}/${repo}"
+if ! configured_toplevel="$(git -C "$configured_root" rev-parse --show-toplevel 2>/dev/null)"; then
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1
+fi
+toplevel="$configured_toplevel"
+
+if active_toplevel="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+    if ! configured_common="$(ai_index_git_common_dir "$configured_toplevel")" || \
+        ! active_common="$(ai_index_git_common_dir "$active_toplevel")"; then
+        echo "ai-index: cannot stamp ${note}: Git could not identify the active worktree" >&2
+        exit 1
+    fi
+    if [ "$configured_common" = "$active_common" ]; then
+        toplevel="$active_toplevel"
+    fi
 fi
 
 if ! ai_index_load_note_metadata "$note" "$repo" no; then
