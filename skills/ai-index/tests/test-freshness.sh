@@ -446,6 +446,38 @@ EOF
 expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/merge-demo")" 'STALE'
 expect_contains "$(bash "$STALE_SCRIPT" merge-demo)" 'STALE'
 
+# Conservative full history can also mark a source stale when the merge kept its recorded state.
+mkdir -p "${TMP}/repos/conservative-merge" "${TMP}/vault/repos/conservative-merge"
+git -C "${TMP}/repos/conservative-merge" init -q
+git -C "${TMP}/repos/conservative-merge" config user.name 'ai-index tests'
+git -C "${TMP}/repos/conservative-merge" config user.email 'ai-index-tests@example.invalid'
+printf 'base\n' >"${TMP}/repos/conservative-merge/source.txt"
+git -C "${TMP}/repos/conservative-merge" add .
+git -C "${TMP}/repos/conservative-merge" commit -qm base
+git -C "${TMP}/repos/conservative-merge" branch side
+git -C "${TMP}/repos/conservative-merge" checkout -qb recorded
+printf 'recorded\n' >"${TMP}/repos/conservative-merge/source.txt"
+git -C "${TMP}/repos/conservative-merge" commit -qam 'recorded source'
+CONSERVATIVE_SHA="$(git -C "${TMP}/repos/conservative-merge" rev-parse HEAD)"
+git -C "${TMP}/repos/conservative-merge" checkout -q side
+printf 'unrelated\n' >"${TMP}/repos/conservative-merge/README.md"
+git -C "${TMP}/repos/conservative-merge" add README.md
+git -C "${TMP}/repos/conservative-merge" commit -qm 'unrelated side change'
+git -C "${TMP}/repos/conservative-merge" checkout -q recorded
+git -C "${TMP}/repos/conservative-merge" merge --no-ff -qm 'merge unchanged source' side
+git -C "${TMP}/repos/conservative-merge" diff --quiet "$CONSERVATIVE_SHA" HEAD -- source.txt || \
+    fail 'conservative merge changed the recorded source'
+cat >"${TMP}/vault/repos/conservative-merge/overview.md" <<EOF
+---
+repo: conservative-merge
+sha: "${CONSERVATIVE_SHA}"
+sources:
+  - source.txt
+---
+EOF
+expect_contains "$(bash "$STATUS_SCRIPT" "${TMP}/repos/conservative-merge")" 'STALE'
+expect_contains "$(bash "$STALE_SCRIPT" conservative-merge)" 'STALE'
+
 # Plugin reminder stays short and preserves the key workflow guardrails.
 GUIDANCE="$(sed -n '/const AI_INDEX_GUIDANCE = \[/,/\].join/p' "$PLUGIN" | tr -d '\n')"
 [[ ${#GUIDANCE} -lt 700 ]] || fail "plugin guidance is not concise (${#GUIDANCE} chars)"

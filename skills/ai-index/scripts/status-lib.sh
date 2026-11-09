@@ -29,26 +29,23 @@ ai_index_git_common_dir() {
 }
 
 ai_index_resolve_repo_key() {
-    local repo_root="$1" git_root="$2" fallback="$3"
-    local configured_top configured_real target_real git_root_real worktrees line worktree_path worktree_real relative
+    local repo_root="$1" git_root="$2" fallback="$3" docs_root="$4"
+    local git_root_real line worktree_path worktree_real relative found primary=""
+    local -a worktrees=() candidates=() noted=()
     AI_INDEX_REPO_KEY="$fallback"
+    AI_INDEX_REPO_REASON="Git could not identify the configured worktree"
 
-    # The common case is the configured checkout itself; avoid listing worktrees.
-    if [ -d "${git_root}/${fallback}/.git" ] && \
-        configured_top="$(git -C "${git_root}/${fallback}" rev-parse --show-toplevel 2>/dev/null)"; then
-        if configured_real="$(cd "$configured_top" 2>/dev/null && pwd -P)" && \
-            target_real="$(cd "$repo_root" 2>/dev/null && pwd -P)" && \
-            [ "$configured_real" = "$target_real" ]; then
-            return 0
-        fi
-    fi
-
-    if ! git_root_real="$(cd "$git_root" 2>/dev/null && pwd -P)" || \
-        ! worktrees="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null)"; then
+    if ! git_root_real="$(cd "$git_root" 2>/dev/null && pwd -P)"; then
         return 1
     fi
+    # A sentinel preserves Git's exit status through process substitution; -z keeps
+    # worktree names containing newlines or other unusual characters intact.
+    if ! mapfile -d '' -t worktrees < <(
+        git -C "$repo_root" worktree list --porcelain -z 2>/dev/null && printf 'ai-index-worktrees-ok\0'
+    ); then return 1; fi
+    [ "${#worktrees[@]}" -gt 0 ] && [ "${worktrees[-1]}" = ai-index-worktrees-ok ] || return 1
 
-    while IFS= read -r line; do
+    for line in "${worktrees[@]}"; do
         case "$line" in
             "worktree "*) worktree_path="${line#worktree }" ;;
             *) continue ;;
@@ -60,10 +57,32 @@ ai_index_resolve_repo_key() {
             *) continue ;;
         esac
         if [ -n "$relative" ] && [[ "$relative" != */* ]]; then
-            AI_INDEX_REPO_KEY="$relative"
-            return 0
+            candidates+=("$relative")
+            [ -d "${worktree_real}/.git" ] && primary="$relative"
+            if [ -d "${docs_root}/repos/${relative}" ]; then
+                if ! found="$(find "${docs_root}/repos/${relative}" -type f -name '*.md' -print -quit 2>/dev/null)"; then
+                    AI_INDEX_REPO_REASON="could not inspect worktree note keys"
+                    return 1
+                fi
+                [ -z "$found" ] || noted+=("$relative")
+            fi
         fi
-    done <<<"$worktrees"
+    done
+
+    if [ "${#noted[@]}" -eq 1 ]; then
+        AI_INDEX_REPO_KEY="${noted[0]}"
+    elif [ "${#noted[@]}" -gt 1 ]; then
+        AI_INDEX_REPO_REASON="ambiguous worktree note keys: $(IFS=,; echo "${noted[*]}")"
+        return 1
+    elif [ "${#candidates[@]}" -eq 1 ]; then
+        AI_INDEX_REPO_KEY="${candidates[0]}"
+    elif [ -n "$primary" ]; then
+        # The registry identifies standalone checkouts by their .git directory.
+        AI_INDEX_REPO_KEY="$primary"
+    elif [ "${#candidates[@]}" -gt 1 ]; then
+        AI_INDEX_REPO_REASON="ambiguous worktrees without a note key: $(IFS=,; echo "${candidates[*]}")"
+        return 1
+    fi
     return 0
 }
 
@@ -179,19 +198,39 @@ ai_index_untracked_path_count() {
     ai_index_git_path_count "$repo_root" ls-files --others --exclude-standard -z -- "$@"
 }
 
-ai_index_flagged_source_count() {
+ai_index_check_source_index() {
     local repo_root="$1"; shift
-    local record tag count=0
-    if ! git -C "$repo_root" ls-files -v -z -- "$@" >"$AI_INDEX_SCRATCH" 2>/dev/null; then
+    local record tag mode path sub_root sub_top
+    local -a records=()
+    if ! git -C "$repo_root" ls-files -v --stage -z -- "$@" >"$AI_INDEX_SCRATCH" 2>/dev/null || \
+        ! mapfile -d '' -t records <"$AI_INDEX_SCRATCH"; then
         return 1
     fi
-    while IFS= read -r -d '' record; do
+    for record in "${records[@]}"; do
         tag="${record:0:1}"
         case "$tag" in
-            [[:lower:]]|S) count=$((count + 1)) ;;
+            [[:lower:]]|S) flagged_count=$((flagged_count + 1)) ;;
         esac
-    done <"$AI_INDEX_SCRATCH"
-    printf '%s\n' "$count"
+        mode="${record:2:6}"
+        [ "$mode" = 160000 ] || continue
+        [[ "$record" == *$'\t'* ]] || return 1
+        path="${record#*$'\t'}"
+        sub_root="${repo_root}/${path}"
+        # An uninitialized or broken submodule cannot prove its sources are clean.
+        if [ ! -e "${sub_root}/.git" ] || \
+            ! sub_top="$(git -C "$sub_root" rev-parse --show-toplevel 2>/dev/null)" || \
+            [ "$(cd "$sub_root" 2>/dev/null && pwd -P)" != "$(cd "$sub_top" 2>/dev/null && pwd -P)" ]; then
+            return 1
+        fi
+        # Check each index separately: recursive ls-files omits intermediate gitlinks.
+        ai_index_check_source_index "$sub_root" || return 1
+    done
+}
+
+ai_index_flagged_source_count() {
+    local repo_root="$1" flagged_count=0; shift
+    ai_index_check_source_index "$repo_root" "$@" || return 1
+    printf '%s\n' "$flagged_count"
 }
 
 ai_index_validate_sources_at() {
@@ -278,7 +317,7 @@ ai_index_check_note() {
 
     if ! flagged="$(ai_index_flagged_source_count "$repo_root" "${AI_NOTE_PATHS[@]}")" || \
         [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
-        AI_NOTE_DETAIL="Git could not inspect declared source index flags"
+        AI_NOTE_DETAIL="Git could not inspect declared source index flags or a declared submodule is unavailable"
         return 0
     fi
     if [ "$flagged" -gt 0 ]; then

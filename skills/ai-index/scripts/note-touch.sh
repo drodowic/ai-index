@@ -77,7 +77,7 @@ fi
 
 if ! flagged="$(ai_index_flagged_source_count "$toplevel" "${AI_NOTE_PATHS[@]}")" || \
     [[ ! "$flagged" =~ ^[0-9]+$ ]]; then
-    echo "ai-index: cannot verify ${note}: Git could not inspect declared source index flags" >&2
+    echo "ai-index: cannot verify ${note}: Git could not inspect declared source index flags or a declared submodule is unavailable" >&2
     exit 1
 fi
 if [ "$flagged" -gt 0 ]; then

@@ -50,8 +50,8 @@ if ! toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)"; then
 fi
 
 repo_fallback="$(basename "$toplevel")"
-if ! ai_index_resolve_repo_key "$toplevel" "$AI_INDEX_GIT_ROOT" "$repo_fallback"; then
-    echo "[ai-index] repo=${repo_fallback} UNVERIFIED: Git could not identify the configured worktree"
+if ! ai_index_resolve_repo_key "$toplevel" "$AI_INDEX_GIT_ROOT" "$repo_fallback" "$INDEX_ROOT"; then
+    echo "[ai-index] repo=${repo_fallback} UNVERIFIED: ${AI_INDEX_REPO_REASON}"
     exit 0
 fi
 repo="$AI_INDEX_REPO_KEY"

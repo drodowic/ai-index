@@ -75,13 +75,20 @@ claims are correct or that the source list is complete. Each source path must ma
 content at the recorded commit; a typo or absent path is `UNVERIFIED`. `STALE` means committed
 source changes; `DIRTY` means staged, unstaged, or non-ignored untracked source changes.
 Git-ignored artifacts such as generated dependencies do not count; `STALE+DIRTY` reports both.
+Merge history is checked conservatively, so a merge can mark an unchanged source `STALE`.
 `UNVERIFIABLE` means the recorded commit is missing or not an ancestor of `HEAD`. `UNVERIFIED`
 means metadata/source-path validation failed, a declared source has an `assume-unchanged` or
-`skip-worktree` index flag, or a Git check could not be trusted. Cross-repo
+`skip-worktree` index flag, a declared submodule is unavailable, or a Git check could not be
+trusted. Index flags are also checked inside nested declared submodules. Cross-repo
 evidence must be checked in the other repo when a task relies on it; `related:` is navigation,
 not verification. `note-touch.sh` uses the active worktree when it shares the configured
 checkout's Git common directory; otherwise it uses the configured checkout. It refuses to stamp
 dirty declared sources, but the reviewer must still verify all retained claims before stamping.
+
+For linked worktrees, status selects the unique existing note key among checkouts under the Git
+root. Multiple note keys, or multiple linked checkouts with no notes and no primary checkout
+under the root, are `UNVERIFIED`. `stale-check.sh <repo-name>` inspects that key's configured
+checkout; verify the active worktree separately if it differs.
 
 ## Tests and evaluation
 
@@ -90,6 +97,7 @@ Run the isolated shell tests with:
 ```bash
 bash skills/ai-index/tests/test-freshness.sh
 bash skills/ai-index/tests/test-status-parallel.sh
+bash skills/ai-index/tests/test-worktree-submodules.sh
 ```
 
 The tests use temporary Git repositories, config, and vault data; they require Bash, Git, `jq`,

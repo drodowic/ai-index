@@ -140,13 +140,20 @@ scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>;
 directory; when invoked elsewhere, it uses the configured checkout.
 
 `STALE` means committed changes were detected under declared sources since the recorded SHA.
+Merge history is conservative: a merge can mark an unchanged source `STALE`.
 `DIRTY` means staged, unstaged, or non-ignored untracked declared-source changes exist; Git-ignored
 artifacts do not count. `STALE+DIRTY` can report both. `UNVERIFIABLE` means the recorded commit is
 missing or is not an ancestor of HEAD. `UNVERIFIED` means metadata, a declared source path, a
-declared source's `assume-unchanged`/`skip-worktree` index flags, or a Git check could not be
-trusted. Declared source paths must match tracked content at the recorded commit. These labels
-validate metadata and change history only; they do not establish semantic correctness or
-source-list completeness.
+declared source's `assume-unchanged`/`skip-worktree` index flags, an unavailable declared
+submodule, or a Git check could not be trusted. Nested declared submodule indexes are checked
+too. Declared source paths must match tracked content at the recorded commit. These labels validate
+metadata and change history only; they do not establish semantic correctness or source-list
+completeness.
+
+For linked worktrees, status selects the unique existing note key among checkouts under the Git
+root. Multiple note keys, or multiple linked checkouts without notes or a primary checkout under
+the root, are `UNVERIFIED`. `stale-check.sh <repo-name>` inspects that key's configured checkout;
+verify the active worktree separately if it differs.
 
 ### 4. Registry maintenance
 
