@@ -46,8 +46,13 @@ while IFS= read -r -d '' note; do
         continue
     fi
 
-    if ! git -C "$toplevel" cat-file -e "${note_sha}^{commit}" 2>/dev/null; then
+    if ! resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
         printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha not found in repo"
+        continue
+    fi
+
+    if ! git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha is not an ancestor of HEAD"
         continue
     fi
 
@@ -57,7 +62,7 @@ while IFS= read -r -d '' note; do
         continue
     fi
 
-    count="$(git -C "$toplevel" rev-list --count "${note_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
+    count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
     if [ "${count:-0}" -gt 0 ]; then
         printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "STALE" "${count} commits since recorded sha"
     else

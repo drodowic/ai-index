@@ -41,13 +41,17 @@ while IFS= read -r -d '' note; do
 
     note_sha="$(fm_get "$note" sha)"
     if [ -n "$note_sha" ]; then
-        if git -C "$toplevel" cat-file -e "${note_sha}^{commit}" 2>/dev/null; then
-            mapfile -t sources < <(fm_list "$note" sources)
-            if [ "${#sources[@]}" -gt 0 ]; then
-                count="$(git -C "$toplevel" rev-list --count "${note_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
-                if [ "${count:-0}" -gt 0 ]; then
-                    stale_lines+=("  STALE: ${rel} (${count} commits since ${note_sha:0:7})")
+        if resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
+            if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
+                mapfile -t sources < <(fm_list "$note" sources)
+                if [ "${#sources[@]}" -gt 0 ]; then
+                    count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
+                    if [ "${count:-0}" -gt 0 ]; then
+                        stale_lines+=("  STALE: ${rel} (${count} commits since ${note_sha:0:7})")
+                    fi
                 fi
+            else
+                stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} is not an ancestor of HEAD)")
             fi
         else
             stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} not found - force-push or shallow clone?)")

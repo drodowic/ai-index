@@ -60,8 +60,9 @@ have notes worth checking. It is silent if the path isn't a git repo.
   of re-reading the source they summarize.
 - For a `STALE` note: re-read only the `sources` paths listed in its frontmatter (not the
   whole repo), update the note's prose to match, then run `note-touch.sh` (see Capture).
-- For `UNVERIFIABLE` (recorded sha not found - force-push, rebase, shallow clone): treat as
-  stale and re-verify from scratch.
+- For `UNVERIFIABLE` (recorded sha not found, or not an ancestor of the current checkout):
+  treat as stale and re-verify from scratch. The latter can mean the note came from another
+  branch.
 
 ### 2. Cross-repo lookup
 
