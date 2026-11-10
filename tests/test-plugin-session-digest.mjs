@@ -79,6 +79,9 @@ test('refreshes primary status and never reuses stale status after a failed chec
     const beforePrimary = await request('generate');
     assert.match(beforePrimary, /status unavailable/);
     assert.match(beforePrimary, /before trusting notes/);
+    assert.match(beforePrimary, /start with recorded sources and follow newly relevant dependencies/);
+    assert.match(beforePrimary, /verify claims against current sources/);
+    assert.match(beforePrimary, /restamp only after verification/);
 
     assert.match(await request('context'), /notes: overview/);
     writeFileSync(join(repo, 'src', 'source.txt'), 'committed change\n');

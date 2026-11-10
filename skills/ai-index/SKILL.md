@@ -76,11 +76,16 @@ cannot reliably verify their contents, so use a different verification method fo
 
 - Read fresh notes directly - trust them, cite them (`per repos/<repo>/overview.md`) instead
   of re-reading the source they summarize.
-- For a `STALE` note: re-read only the `sources` paths listed in its frontmatter (not the
-  whole repo), update the note's prose to match, then run `note-touch.sh` (see Capture).
+- For a `STALE` note: use its recorded `sources` as the starting scope. Re-read changed
+  sources, then follow newly relevant dependencies only as needed to verify the note's
+  claims. Add dependencies used to `sources`, update the prose, and run `note-touch.sh`
+  only after verification (see Capture). Do not reread the whole repo unless the claims
+  require it.
 - For `UNVERIFIABLE` (recorded sha not found, or not an ancestor of the current checkout):
-  treat as stale and re-verify from scratch. The latter can mean the note came from another
-  branch.
+  treat as stale and re-verify its claims against current sources. Use recorded `sources`
+  as starting points, not as a complete list; follow newly relevant dependencies as needed
+  and add them to `sources`. Restamp only after verification. The latter can mean the note
+  came from another branch.
 - Missing SHAs, empty or invalid source lists, sources not tracked at the recorded SHA, and
   Git check failures are also `UNVERIFIABLE`. A source deleted after its recorded SHA is
   `STALE`. Source paths are treated literally, not as Git pathspec patterns.
@@ -94,9 +99,10 @@ Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user 
 ```
 
 Then read the relevant `repos/<repo-name>/*.md` notes directly. Never repeat a stale note's
-claim without re-verifying against its `sources` first. `groups/*.md` notes explain *why* two
-repos are related (shared team, shared product, API contract) - read those to know which
-related-repo notes are relevant to the current task.
+claim without re-verifying it against current sources, starting with its `sources` and
+following newly relevant dependencies as needed. `groups/*.md` notes explain *why* two repos
+are related (shared team, shared product, API contract) - read those to know which related-repo
+notes are relevant to the current task.
 
 `related` and group membership are discovery hints, not freshness dependencies. When a task
 depends on another repository's contract, check that repository's relevant note and status
