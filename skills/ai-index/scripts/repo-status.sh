@@ -21,8 +21,11 @@ toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || true)"
 [ -z "$toplevel" ] && exit 0   # not a git repo - silent, not an error
 
 repo="$(basename "$toplevel")"
-branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")"
-head_sha="$(git -C "$toplevel" rev-parse --short HEAD 2>/dev/null || echo "?")"
+if ! branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null)" || \
+   ! head_sha="$(git -C "$toplevel" rev-parse --short HEAD 2>/dev/null)"; then
+    echo "ai-index: Git check failed while resolving repository HEAD for ${toplevel}" >&2
+    exit 1
+fi
 notes_dir="${INDEX_ROOT}/repos/${repo}"
 
 if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/dev/null)" ]; then
@@ -41,7 +44,13 @@ while IFS= read -r -d '' note; do
     notes+=("$rel")
 
     note_sha="$(fm_get "$note" sha)"
-    mapfile -t sources < <(fm_list "$note" sources)
+    if fm_validate_source_list "$note"; then
+        source_list_valid=true
+        mapfile -t sources < <(fm_list "$note" sources)
+    else
+        source_list_valid=false
+        sources=()
+    fi
     fm_check_sources "${sources[@]}"
     unverifiable_details=()
     if [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
@@ -52,35 +61,50 @@ while IFS= read -r -d '' note; do
     fi
 
     if [ -z "$note_sha" ]; then
-        if [ "${#unverifiable_details[@]}" -gt 0 ]; then
-            [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
-            stale_lines+=("  UNVERIFIABLE: ${rel} (no sha recorded; $(fm_join_details "${unverifiable_details[@]}"))")
-        elif [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
-            stale_lines+=("  STALE: ${rel} (working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}"); no sha recorded)")
-        fi
+        [ "$source_list_valid" = false ] && unverifiable_details+=("${FM_SOURCE_LIST_ERROR}")
+        [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+        stale_lines+=("  UNVERIFIABLE: ${rel} ($(fm_join_details "no sha recorded" "${unverifiable_details[@]}"))")
     else
         if resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
             if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
-                count=0
-                if [ "${#sources[@]}" -gt 0 ]; then
-                    count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
-                fi
-                if [ "${#unverifiable_details[@]}" -gt 0 ]; then
-                    if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
-                        unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+                if [ "$source_list_valid" = false ]; then
+                    stale_lines+=("  UNVERIFIABLE: ${rel} (${FM_SOURCE_LIST_ERROR})")
+                elif ! fm_validate_sources_at_commit "$toplevel" "$resolved_sha" "${sources[@]}"; then
+                    stale_lines+=("  UNVERIFIABLE: ${rel} (${FM_SOURCE_VALIDATION_ERROR})")
+                else
+                    count=""
+                    if [ "$FM_SOURCE_IS_ROOT" = true ]; then
+                        if ! count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" 2>/dev/null)"; then
+                            count=""
+                        fi
+                    elif ! count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${FM_LITERAL_SOURCE_PATHS[@]}" 2>/dev/null)"; then
+                        count=""
                     fi
-                    [ "${count:-0}" -gt 0 ] && unverifiable_details+=("${count} commits since ${note_sha:0:7}")
-                    stale_lines+=("  UNVERIFIABLE: ${rel} ($(fm_join_details "${unverifiable_details[@]}"))")
-                elif [ "${count:-0}" -gt 0 ] || [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
-                    details=()
-                    [ "${count:-0}" -gt 0 ] && details+=("${count} commits since ${note_sha:0:7}")
-                    if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
-                        details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+
+                    if [ -z "$count" ]; then
+                        stale_lines+=("  UNVERIFIABLE: ${rel} (Git check failed)")
+                    elif [ "${#unverifiable_details[@]}" -gt 0 ]; then
+                        if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                            unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+                        fi
+                        [ "$count" -gt 0 ] && unverifiable_details+=("${count} commits since ${note_sha:0:7}")
+                        stale_lines+=("  UNVERIFIABLE: ${rel} ($(fm_join_details "${unverifiable_details[@]}"))")
+                    elif [ "$count" -gt 0 ] || [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                        details=()
+                        [ "$count" -gt 0 ] && details+=("${count} commits since ${note_sha:0:7}")
+                        if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                            details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+                        fi
+                        stale_lines+=("  STALE: ${rel} ($(fm_join_details "${details[@]}"))")
                     fi
-                    stale_lines+=("  STALE: ${rel} ($(fm_join_details "${details[@]}"))")
                 fi
             else
-                stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} is not an ancestor of HEAD)")
+                merge_base_status=$?
+                if [ "$merge_base_status" -eq 1 ]; then
+                    stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} is not an ancestor of HEAD)")
+                else
+                    stale_lines+=("  UNVERIFIABLE: ${rel} (Git check failed)")
+                fi
             fi
         else
             stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} not found - force-push or shallow clone?)")

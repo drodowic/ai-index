@@ -42,7 +42,13 @@ while IFS= read -r -d '' note; do
     rel="${rel%.md}"
     note_sha="$(fm_get "$note" sha)"
 
-    mapfile -t sources < <(fm_list "$note" sources)
+    if fm_validate_source_list "$note"; then
+        source_list_valid=true
+        mapfile -t sources < <(fm_list "$note" sources)
+    else
+        source_list_valid=false
+        sources=()
+    fi
     fm_check_sources "${sources[@]}"
     unverifiable_details=()
     if [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
@@ -53,12 +59,9 @@ while IFS= read -r -d '' note; do
     fi
 
     if [ -z "$note_sha" ]; then
-        if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#unverifiable_details[@]}" -gt 0 ]; then
-            [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
-            printf '%-35s %-10s %-12s %s\n' "$rel" "-" "UNVERIFIABLE" "$(fm_join_details "no sha recorded" "${unverifiable_details[@]}")"
-        else
-            printf '%-35s %-10s %-12s %s\n' "$rel" "-" "n/a" "no sha recorded (group/reference note?)"
-        fi
+        [ "$source_list_valid" = false ] && unverifiable_details+=("${FM_SOURCE_LIST_ERROR}")
+        [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+        printf '%-35s %-10s %-12s %s\n' "$rel" "-" "UNVERIFIABLE" "$(fm_join_details "no sha recorded" "${unverifiable_details[@]}")"
         continue
     fi
 
@@ -67,24 +70,45 @@ while IFS= read -r -d '' note; do
         continue
     fi
 
-    if ! git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
-        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha is not an ancestor of HEAD"
+    if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
+        :
+    else
+        merge_base_status=$?
+        if [ "$merge_base_status" -eq 1 ]; then
+            printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha is not an ancestor of HEAD"
+        else
+            printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "Git check failed"
+        fi
         continue
     fi
 
-    if [ "${#sources[@]}" -eq 0 ]; then
-        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "fresh" "no sources declared"
+    if [ "$source_list_valid" = false ]; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "$FM_SOURCE_LIST_ERROR"
         continue
     fi
 
-    count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
-    if [ "${#unverifiable_details[@]}" -gt 0 ]; then
+    if ! fm_validate_sources_at_commit "$toplevel" "$resolved_sha" "${sources[@]}"; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "$FM_SOURCE_VALIDATION_ERROR"
+        continue
+    fi
+
+    if [ "$FM_SOURCE_IS_ROOT" = true ]; then
+        if ! count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" 2>/dev/null)"; then
+            count=""
+        fi
+    elif ! count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${FM_LITERAL_SOURCE_PATHS[@]}" 2>/dev/null)"; then
+        count=""
+    fi
+
+    if [ -z "$count" ]; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "Git check failed"
+    elif [ "${#unverifiable_details[@]}" -gt 0 ]; then
         [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
-        [ "${count:-0}" -gt 0 ] && unverifiable_details+=("${count} commits since recorded sha")
+        [ "$count" -gt 0 ] && unverifiable_details+=("${count} commits since recorded sha")
         printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "$(fm_join_details "${unverifiable_details[@]}")"
-    elif [ "${count:-0}" -gt 0 ] || [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+    elif [ "$count" -gt 0 ] || [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
         details=()
-        [ "${count:-0}" -gt 0 ] && details+=("${count} commits since recorded sha")
+        [ "$count" -gt 0 ] && details+=("${count} commits since recorded sha")
         if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
             details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
         fi

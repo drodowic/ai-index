@@ -46,6 +46,26 @@ fm_list() {
     yq --front-matter=extract "(.${key} // [])[]" "$file" 2>/dev/null
 }
 
+# Check the YAML shape before fm_list flattens values into lines. Only a
+# nonempty sequence of nonempty strings can be a source list.
+fm_validate_source_list() {
+    local file="$1" json
+    FM_SOURCE_LIST_ERROR=""
+    if ! json="$(yq --front-matter=extract -o=json '.sources // null' "$file" 2>/dev/null)"; then
+        FM_SOURCE_LIST_ERROR="invalid sources metadata"
+        return 1
+    fi
+    if jq -e '. == null or . == []' >/dev/null <<< "$json"; then
+        FM_SOURCE_LIST_ERROR="missing sources"
+        return 1
+    fi
+    if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' >/dev/null <<< "$json"; then
+        FM_SOURCE_LIST_ERROR="invalid sources metadata"
+        return 1
+    fi
+    return 0
+}
+
 # Working-tree state shared by the status scripts. Collect once per run, then
 # compare these repository-relative paths against each note's declared sources.
 FM_DIRTY_PATHS=()
@@ -53,6 +73,10 @@ FM_IGNORED_PATHS=()
 FM_MATCHED_DIRTY_PATHS=()
 FM_MATCHED_IGNORED_PATHS=()
 FM_EXTERNAL_SOURCES=()
+FM_SOURCE_LIST_ERROR=""
+FM_SOURCE_VALIDATION_ERROR=""
+FM_LITERAL_SOURCE_PATHS=()
+FM_SOURCE_IS_ROOT=false
 
 fm_collect_status() {
     local toplevel="$1" entry status path previous_path status_file
@@ -107,6 +131,87 @@ fm_source_is_external() {
         esac
     done
     return 1
+}
+
+# Return a canonical repository-relative path. Git pathspec metacharacters are
+# ordinary filename characters here; callers pass the result with :(literal).
+fm_normalize_source() {
+    local source="$1" component
+    local -a components=() normalized=()
+    [[ -z "$source" || "$source" == /* ]] && return 1
+
+    IFS='/' read -r -a components <<< "$source"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..) return 1 ;;
+            *) normalized+=("$component") ;;
+        esac
+    done
+
+    if [ "${#normalized[@]}" -eq 0 ]; then
+        printf '.'
+    else
+        local IFS='/'
+        printf '%s' "${normalized[*]}"
+    fi
+}
+
+# Validate that every declared source names tracked content at a recorded
+# commit. A source may be a tracked file or a directory containing tracked
+# files. Failures are kept distinct from invalid metadata so callers never turn
+# a Git error into a zero-change/fresh result.
+fm_validate_sources_at_commit() {
+    local toplevel="$1" commit="$2" source normalized tree_file
+    shift 2
+    FM_SOURCE_VALIDATION_ERROR=""
+    FM_LITERAL_SOURCE_PATHS=()
+    FM_SOURCE_IS_ROOT=false
+
+    if [ "$#" -eq 0 ]; then
+        FM_SOURCE_VALIDATION_ERROR="missing sources"
+        return 1
+    fi
+
+    for source in "$@"; do
+        if ! normalized="$(fm_normalize_source "$source")"; then
+            if fm_source_is_external "$source"; then
+                FM_SOURCE_VALIDATION_ERROR="external or invalid source path: ${source}"
+            else
+                FM_SOURCE_VALIDATION_ERROR="invalid source path: ${source}"
+            fi
+            return 1
+        fi
+
+        if [ "$normalized" = "." ]; then
+            FM_SOURCE_IS_ROOT=true
+        else
+            FM_LITERAL_SOURCE_PATHS+=(":(literal)${normalized}")
+        fi
+
+        tree_file="$(mktemp)" || {
+            FM_SOURCE_VALIDATION_ERROR="Git check failed"
+            return 2
+        }
+        if [ "$normalized" = "." ]; then
+            if ! git -C "$toplevel" ls-tree -r --name-only -z "$commit" >"$tree_file" 2>/dev/null; then
+                rm -f -- "$tree_file"
+                FM_SOURCE_VALIDATION_ERROR="Git check failed"
+                return 2
+            fi
+        elif ! git -C "$toplevel" ls-tree -r --name-only -z "$commit" -- ":(literal)${normalized}" >"$tree_file" 2>/dev/null; then
+            rm -f -- "$tree_file"
+            FM_SOURCE_VALIDATION_ERROR="Git check failed"
+            return 2
+        fi
+
+        if [ ! -s "$tree_file" ]; then
+            rm -f -- "$tree_file"
+            FM_SOURCE_VALIDATION_ERROR="source not found at recorded SHA: ${source}"
+            return 1
+        fi
+        rm -f -- "$tree_file"
+    done
 }
 
 fm_paths_overlap() {

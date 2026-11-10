@@ -67,6 +67,9 @@ cannot reliably verify their contents, so use a different verification method fo
 - For `UNVERIFIABLE` (recorded sha not found, or not an ancestor of the current checkout):
   treat as stale and re-verify from scratch. The latter can mean the note came from another
   branch.
+- Missing SHAs, empty or invalid source lists, sources not tracked at the recorded SHA, and
+  Git check failures are also `UNVERIFIABLE`. A source deleted after its recorded SHA is
+  `STALE`. Source paths are treated literally, not as Git pathspec patterns.
 
 ### 2. Cross-repo lookup
 
@@ -118,8 +121,9 @@ After writing or editing a note:
 scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>
 ```
 
-`note-touch.sh` refuses to stamp notes whose sources have working-tree changes, ignored paths,
-or paths outside the repository. Resolve those changes or verify the source another way first.
+`note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
+working-tree changes, ignored paths, or paths outside the repository. Resolve those changes or
+verify the source another way first.
 
 ### 4. Registry maintenance
 

@@ -28,9 +28,9 @@ async function computeDigest(target) {
       // directly at ai-index/, and inherited environment values can override its defaults.
       env: process.env,
     });
-    return stdout.trim();
+    return stdout.trim() || '[ai-index] status unavailable (no Git status result).';
   } catch {
-    return '';
+    return '[ai-index] status unavailable (Git check failed or timed out).';
   }
 }
 

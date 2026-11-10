@@ -22,6 +22,7 @@ git -C "$REPO" config user.name 'ai-index test'
 git -C "$REPO" config user.email 'ai-index-test@example.invalid'
 mkdir -p "${REPO}/src/dir"
 printf 'original\n' > "${REPO}/src/tracked.txt"
+printf 'directory baseline\n' > "${REPO}/src/dir/tracked.txt"
 printf 'src/dir/cache/\n' > "${REPO}/.gitignore"
 git -C "$REPO" add .gitignore src
 git -C "$REPO" commit -qm 'base'
@@ -91,7 +92,7 @@ table="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/stale-check.sh"
 grep -Fq 'UNVERIFIABLE' <<< "$table"
 grep -Fq 'src/tracked.txt' <<< "$table"
 status="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/repo-status.sh" "$REPO")"
-grep -Fq 'STALE: area' <<< "$status"
+grep -Fq 'UNVERIFIABLE: area (no sha recorded' <<< "$status"
 printf 'original\n' > "${REPO}/src/tracked.txt"
 write_note src/tracked.txt
 printf 'staged edit\n' > "${REPO}/src/tracked.txt"

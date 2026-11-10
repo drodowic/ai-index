@@ -33,7 +33,20 @@ if [ ! -d "${toplevel}/.git" ]; then
     exit 1
 fi
 
+if ! fm_validate_source_list "$note"; then
+    echo "ai-index: refusing to stamp ${note}; ${FM_SOURCE_LIST_ERROR}." >&2
+    exit 1
+fi
 mapfile -t sources < <(fm_list "$note" sources)
+if ! head_sha="$(git -C "$toplevel" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)"; then
+    echo "ai-index: refusing to stamp ${note}; Git check failed while resolving HEAD." >&2
+    exit 1
+fi
+if ! fm_validate_sources_at_commit "$toplevel" "$head_sha" "${sources[@]}"; then
+    echo "ai-index: refusing to stamp ${note}; ${FM_SOURCE_VALIDATION_ERROR}." >&2
+    exit 1
+fi
+
 fm_collect_status "$toplevel"
 fm_check_sources "${sources[@]}"
 if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ] || [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
@@ -50,7 +63,6 @@ if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#FM_MATCHED_IGNORED_PATHS[@
     exit 1
 fi
 
-head_sha="$(git -C "$toplevel" rev-parse HEAD)"
 today="$(date +%F)"
 
 fm_set "$note" sha "$head_sha"
