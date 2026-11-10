@@ -65,10 +65,11 @@ while IFS= read -r -d '' note; do
         continue
     fi
 
-    if ! resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
-        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "sha not found in repo"
+    if ! fm_resolve_commit_hash "$toplevel" "$note_sha"; then
+        printf '%-35s %-10s %-12s %s\n' "$rel" "${note_sha:0:7}" "UNVERIFIABLE" "$FM_COMMIT_HASH_ERROR"
         continue
     fi
+    resolved_sha="$FM_RESOLVED_COMMIT_HASH"
 
     if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
         :

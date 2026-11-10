@@ -78,6 +78,34 @@ FM_SOURCE_VALIDATION_ERROR=""
 FM_LITERAL_SOURCE_PATHS=()
 FM_SOURCE_IS_ROOT=false
 FM_CONFIGURED_REPO_KEYS=()
+FM_RESOLVED_COMMIT_HASH=""
+FM_COMMIT_HASH_ERROR=""
+
+# Resolve only a hexadecimal commit ID. rev-parse accepts symbolic refs and
+# revision expressions too, so validate the input before asking Git to resolve
+# it. Git rejects ambiguous abbreviations; verify the result still has the
+# supplied prefix to avoid accepting any other revision syntax.
+fm_resolve_commit_hash() {
+    local toplevel="$1" value="$2"
+    FM_RESOLVED_COMMIT_HASH=""
+    FM_COMMIT_HASH_ERROR=""
+
+    if [[ ! "$value" =~ ^[[:xdigit:]]+$ ]]; then
+        FM_COMMIT_HASH_ERROR="invalid commit hash"
+        return 1
+    fi
+    if ! FM_RESOLVED_COMMIT_HASH="$(git -C "$toplevel" rev-parse --verify --quiet "${value}^{commit}" 2>/dev/null)"; then
+        FM_COMMIT_HASH_ERROR="commit hash not found or ambiguous in repo"
+        return 1
+    fi
+    if [[ ! "$FM_RESOLVED_COMMIT_HASH" =~ ^[[:xdigit:]]+$ ]] || \
+       [[ "${FM_RESOLVED_COMMIT_HASH,,}" != "${value,,}"* ]]; then
+        FM_RESOLVED_COMMIT_HASH=""
+        FM_COMMIT_HASH_ERROR="invalid commit hash"
+        return 1
+    fi
+    return 0
+}
 
 # Print the absolute Git common directory for a worktree. Unlike its top-level
 # directory, this is shared by linked worktrees and differs between clones.
@@ -322,5 +350,9 @@ fm_join_details() {
 
 fm_set() {
     local file="$1" key="$2" value="$3"
-    yq --front-matter=process -i ".${key} = \"${value}\"" "$file"
+    if [ "$key" = "sha" ]; then
+        FM_SET_VALUE="$value" yq --front-matter=process -i ".${key} = strenv(FM_SET_VALUE) | .${key} style=\"double\"" "$file"
+    else
+        yq --front-matter=process -i ".${key} = \"${value}\"" "$file"
+    fi
 }

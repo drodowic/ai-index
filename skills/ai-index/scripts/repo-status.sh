@@ -124,7 +124,8 @@ while IFS= read -r -d '' note; do
         [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
         stale_lines+=("  UNVERIFIABLE: ${rel} ($(fm_join_details "no sha recorded" "${unverifiable_details[@]}"))")
     else
-        if resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
+        if fm_resolve_commit_hash "$toplevel" "$note_sha"; then
+            resolved_sha="$FM_RESOLVED_COMMIT_HASH"
             if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
                 if [ "$source_list_valid" = false ]; then
                     stale_lines+=("  UNVERIFIABLE: ${rel} (${FM_SOURCE_LIST_ERROR})")
@@ -166,7 +167,7 @@ while IFS= read -r -d '' note; do
                 fi
             fi
         else
-            stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} not found - force-push or shallow clone?)")
+            stale_lines+=("  UNVERIFIABLE: ${rel} (${FM_COMMIT_HASH_ERROR})")
         fi
     fi
 
