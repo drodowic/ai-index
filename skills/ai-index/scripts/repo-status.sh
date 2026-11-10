@@ -118,6 +118,9 @@ while IFS= read -r -d '' note; do
     if [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ]; then
         unverifiable_details+=("ignored paths: $(fm_format_paths "${FM_MATCHED_IGNORED_PATHS[@]}")")
     fi
+    if [ "${#FM_MATCHED_FLAGGED_PATHS[@]}" -gt 0 ]; then
+        unverifiable_details+=("flagged index paths (assume-unchanged/skip-worktree): $(fm_format_paths "${FM_MATCHED_FLAGGED_PATHS[@]}")")
+    fi
 
     if [ -z "$note_sha" ]; then
         [ "$source_list_valid" = false ] && unverifiable_details+=("${FM_SOURCE_LIST_ERROR}")

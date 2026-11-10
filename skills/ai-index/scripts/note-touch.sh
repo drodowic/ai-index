@@ -108,13 +108,17 @@ fi
 
 fm_collect_status "$toplevel"
 fm_check_sources "$toplevel" "${sources[@]}"
-if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ] || [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
+if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ] || \
+   [ "${#FM_MATCHED_FLAGGED_PATHS[@]}" -gt 0 ] || [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
     echo "ai-index: refusing to stamp ${note}; verify these sources first." >&2
     if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
         echo "  working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")" >&2
     fi
     if [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ]; then
         echo "  ignored paths (Git cannot verify these): $(fm_format_paths "${FM_MATCHED_IGNORED_PATHS[@]}")" >&2
+    fi
+    if [ "${#FM_MATCHED_FLAGGED_PATHS[@]}" -gt 0 ]; then
+        echo "  flagged index paths (assume-unchanged/skip-worktree): $(fm_format_paths "${FM_MATCHED_FLAGGED_PATHS[@]}")" >&2
     fi
     if [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
         echo "  external sources (Git cannot verify these): $(fm_format_paths "${FM_EXTERNAL_SOURCES[@]}")" >&2

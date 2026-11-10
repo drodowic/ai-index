@@ -66,12 +66,14 @@ fm_validate_source_list() {
     return 0
 }
 
-# Working-tree state shared by the status scripts. Collect once per run, then
-# compare these repository-relative paths against each note's declared sources.
+# Working-tree and index state shared by the status scripts. Collect once per
+# run, then compare repository-relative paths against each note's declared sources.
 FM_DIRTY_PATHS=()
 FM_IGNORED_PATHS=()
+FM_FLAGGED_PATHS=()
 FM_MATCHED_DIRTY_PATHS=()
 FM_MATCHED_IGNORED_PATHS=()
+FM_MATCHED_FLAGGED_PATHS=()
 FM_EXTERNAL_SOURCES=()
 FM_SOURCE_LIST_ERROR=""
 FM_SOURCE_VALIDATION_ERROR=""
@@ -148,9 +150,10 @@ fm_configured_repo_keys_for_common_dir() {
 }
 
 fm_collect_status() {
-    local toplevel="$1" entry status path previous_path status_file
+    local toplevel="$1" entry status path previous_path status_file flagged_file tag
     FM_DIRTY_PATHS=()
     FM_IGNORED_PATHS=()
+    FM_FLAGGED_PATHS=()
 
     status_file="$(mktemp)"
     if ! git -C "$toplevel" status --porcelain=v1 -z --untracked-files=all --ignored=matching > "$status_file"; then
@@ -177,6 +180,26 @@ fm_collect_status() {
         fi
     done < "$status_file"
     rm -f -- "$status_file"
+
+    flagged_file="$(mktemp)" || {
+        echo "ai-index: unable to collect Git index flags for ${toplevel}" >&2
+        return 1
+    }
+    if ! git -C "$toplevel" ls-files -v -z > "$flagged_file"; then
+        rm -f -- "$flagged_file"
+        echo "ai-index: unable to collect Git index flags for ${toplevel}" >&2
+        return 1
+    fi
+
+    # -v lowercases tags for assume-unchanged entries; S marks skip-worktree.
+    # Parse NUL-delimited records so unusual filenames remain intact.
+    while IFS= read -r -d '' entry; do
+        tag="${entry:0:1}"
+        if [[ "$tag" == "S" || "$tag" =~ [[:lower:]] ]]; then
+            FM_FLAGGED_PATHS+=("${entry:2}")
+        fi
+    done < "$flagged_file"
+    rm -f -- "$flagged_file"
 }
 
 fm_source_is_external() {
@@ -322,6 +345,7 @@ fm_check_sources() {
     shift
     FM_MATCHED_DIRTY_PATHS=()
     FM_MATCHED_IGNORED_PATHS=()
+    FM_MATCHED_FLAGGED_PATHS=()
     FM_EXTERNAL_SOURCES=()
 
     for source in "$@"; do
@@ -332,6 +356,11 @@ fm_check_sources() {
         for path in "${FM_DIRTY_PATHS[@]}"; do
             if fm_paths_overlap "$source" "$path"; then
                 FM_MATCHED_DIRTY_PATHS+=("$path")
+            fi
+        done
+        for path in "${FM_FLAGGED_PATHS[@]}"; do
+            if fm_paths_overlap "$source" "$path"; then
+                FM_MATCHED_FLAGGED_PATHS+=("$path")
             fi
         done
         # Ignored descendants (usually generated caches) are outside Git's
