@@ -23,11 +23,43 @@ if [ -z "$repo" ]; then
     exit 1
 fi
 
-toplevel="${GIT_ROOT}/${repo}"
-if [ ! -d "${toplevel}/.git" ]; then
+if [[ "$repo" == */* || "$repo" == "." || "$repo" == ".." ]]; then
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1
 fi
+
+configured_path="${GIT_ROOT}/${repo}"
+if [ ! -d "$configured_path" ]; then
+    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+    exit 1
+fi
+configured_checkout="$(cd "$configured_path" 2>/dev/null && pwd -P)" || {
+    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+    exit 1
+}
+# Git accepts paths inside a checkout; require the configured path itself to be
+# the worktree root so checks cannot silently use a parent repository.
+git_toplevel="$(git -C "$configured_path" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+    exit 1
+}
+git_toplevel="$(cd "$git_toplevel" 2>/dev/null && pwd -P)" || {
+    echo "ai-index: Git check failed while resolving configured checkout '${configured_checkout}'" >&2
+    exit 1
+}
+if [ "$git_toplevel" != "$configured_checkout" ]; then
+    echo "ai-index: configured path '${configured_checkout}' is not a Git worktree root (Git top-level is '${git_toplevel}')" >&2
+    exit 1
+fi
+toplevel="$git_toplevel"
+
+if ! branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null)" || \
+   ! head_sha="$(git -C "$toplevel" rev-parse --short HEAD 2>/dev/null)"; then
+    echo "ai-index: Git check failed while resolving repository HEAD for ${toplevel}" >&2
+    exit 1
+fi
+printf '[ai-index] repo=%s @ %s %s (configured checkout: %s)\n' \
+    "$repo" "$branch" "$head_sha" "$toplevel"
 
 notes_dir="${INDEX_ROOT}/repos/${repo}"
 if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/dev/null)" ]; then
