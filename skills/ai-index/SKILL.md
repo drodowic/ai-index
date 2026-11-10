@@ -56,6 +56,10 @@ scripts/repo-status.sh [path]      # defaults to $PWD; the ai-index opencode plu
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
 have notes worth checking. It is silent if the path isn't a git repo.
 
+Freshness checks include staged and unstaged changes, plus non-ignored untracked files under
+declared sources. Ignored paths and sources outside the repository are `UNVERIFIABLE`: Git
+cannot reliably verify their contents, so use a different verification method for those notes.
+
 - Read fresh notes directly - trust them, cite them (`per repos/<repo>/overview.md`) instead
   of re-reading the source they summarize.
 - For a `STALE` note: re-read only the `sources` paths listed in its frontmatter (not the
@@ -113,6 +117,9 @@ After writing or editing a note:
 ```
 scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>
 ```
+
+`note-touch.sh` refuses to stamp notes whose sources have working-tree changes, ignored paths,
+or paths outside the repository. Resolve those changes or verify the source another way first.
 
 ### 4. Registry maintenance
 

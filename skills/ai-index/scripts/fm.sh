@@ -46,6 +46,134 @@ fm_list() {
     yq --front-matter=extract "(.${key} // [])[]" "$file" 2>/dev/null
 }
 
+# Working-tree state shared by the status scripts. Collect once per run, then
+# compare these repository-relative paths against each note's declared sources.
+FM_DIRTY_PATHS=()
+FM_IGNORED_PATHS=()
+FM_MATCHED_DIRTY_PATHS=()
+FM_MATCHED_IGNORED_PATHS=()
+FM_EXTERNAL_SOURCES=()
+
+fm_collect_status() {
+    local toplevel="$1" entry status path previous_path status_file
+    FM_DIRTY_PATHS=()
+    FM_IGNORED_PATHS=()
+
+    status_file="$(mktemp)"
+    if ! git -C "$toplevel" status --porcelain=v1 -z --untracked-files=all --ignored=matching > "$status_file"; then
+        rm -f -- "$status_file"
+        echo "ai-index: unable to read Git working-tree status for ${toplevel}" >&2
+        return 1
+    fi
+
+    while IFS= read -r -d '' entry; do
+        status="${entry:0:2}"
+        path="${entry:3}"
+        if [ "$status" = "!!" ]; then
+            FM_IGNORED_PATHS+=("$path")
+        else
+            FM_DIRTY_PATHS+=("$path")
+        fi
+
+        # With -z, rename/copy records contain the destination followed by
+        # the original path as a second NUL-delimited field.
+        if [[ "$status" == *R* || "$status" == *C* ]]; then
+            if IFS= read -r -d '' previous_path; then
+                FM_DIRTY_PATHS+=("$previous_path")
+            fi
+        fi
+    done < "$status_file"
+    rm -f -- "$status_file"
+}
+
+fm_source_is_external() {
+    local source="$1" rest component depth=0
+    local -a components=()
+    [[ "$source" == /* ]] && return 0
+
+    # Sources are repository-relative paths. Reject paths that lexically escape
+    # the checkout; Git cannot establish freshness for external files.
+    rest="$source"
+    while [[ "$rest" == ./* ]]; do rest="${rest#./}"; done
+    IFS='/' read -r -a components <<< "$rest"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..)
+                depth=$((depth - 1))
+                [ "$depth" -lt 0 ] && return 0
+                ;;
+            *) depth=$((depth + 1)) ;;
+        esac
+    done
+    return 1
+}
+
+fm_paths_overlap() {
+    local source="$1" path="$2" component
+    local -a components=() normalized=()
+    while [[ "$source" == ./* ]]; do source="${source#./}"; done
+    IFS='/' read -r -a components <<< "$source"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..)
+                if [ "${#normalized[@]}" -gt 0 ]; then
+                    normalized=("${normalized[@]:0:${#normalized[@]}-1}")
+                fi
+                ;;
+            *) normalized+=("$component") ;;
+        esac
+    done
+    local IFS='/'
+    source="${normalized[*]}"
+    while [[ "$path" == */ ]]; do path="${path%/}"; done
+
+    [ -z "$source" ] && return 0
+    [[ "$path" == "$source" || "$path" == "$source/"* || "$source" == "$path/"* ]]
+}
+
+fm_check_sources() {
+    local source path
+    FM_MATCHED_DIRTY_PATHS=()
+    FM_MATCHED_IGNORED_PATHS=()
+    FM_EXTERNAL_SOURCES=()
+
+    for source in "$@"; do
+        if fm_source_is_external "$source"; then
+            FM_EXTERNAL_SOURCES+=("$source")
+            continue
+        fi
+        for path in "${FM_DIRTY_PATHS[@]}"; do
+            if fm_paths_overlap "$source" "$path"; then
+                FM_MATCHED_DIRTY_PATHS+=("$path")
+            fi
+        done
+        for path in "${FM_IGNORED_PATHS[@]}"; do
+            if fm_paths_overlap "$source" "$path"; then
+                FM_MATCHED_IGNORED_PATHS+=("$path")
+            fi
+        done
+    done
+}
+
+fm_format_paths() {
+    local formatted="" path quoted
+    for path in "$@"; do
+        printf -v quoted '%q' "$path"
+        formatted+="${formatted:+, }${quoted}"
+    done
+    printf '%s' "$formatted"
+}
+
+fm_join_details() {
+    local separator="" detail
+    for detail in "$@"; do
+        printf '%s%s' "$separator" "$detail"
+        separator="; "
+    done
+}
+
 fm_set() {
     local file="$1" key="$2" value="$3"
     yq --front-matter=process -i ".${key} = \"${value}\"" "$file"

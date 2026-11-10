@@ -33,6 +33,7 @@ fi
 notes=()
 stale_lines=()
 related_from_notes=()
+fm_collect_status "$toplevel"
 
 while IFS= read -r -d '' note; do
     rel="${note#"${notes_dir}"/}"
@@ -40,15 +41,43 @@ while IFS= read -r -d '' note; do
     notes+=("$rel")
 
     note_sha="$(fm_get "$note" sha)"
-    if [ -n "$note_sha" ]; then
+    mapfile -t sources < <(fm_list "$note" sources)
+    fm_check_sources "${sources[@]}"
+    unverifiable_details=()
+    if [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
+        unverifiable_details+=("external sources: $(fm_format_paths "${FM_EXTERNAL_SOURCES[@]}")")
+    fi
+    if [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ]; then
+        unverifiable_details+=("ignored paths: $(fm_format_paths "${FM_MATCHED_IGNORED_PATHS[@]}")")
+    fi
+
+    if [ -z "$note_sha" ]; then
+        if [ "${#unverifiable_details[@]}" -gt 0 ]; then
+            [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] && unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+            stale_lines+=("  UNVERIFIABLE: ${rel} (no sha recorded; $(fm_join_details "${unverifiable_details[@]}"))")
+        elif [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+            stale_lines+=("  STALE: ${rel} (working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}"); no sha recorded)")
+        fi
+    else
         if resolved_sha="$(git -C "$toplevel" rev-parse --verify --quiet "${note_sha}^{commit}" 2>/dev/null)"; then
             if git -C "$toplevel" merge-base --is-ancestor "$resolved_sha" HEAD 2>/dev/null; then
-                mapfile -t sources < <(fm_list "$note" sources)
+                count=0
                 if [ "${#sources[@]}" -gt 0 ]; then
                     count="$(git -C "$toplevel" rev-list --count "${resolved_sha}..HEAD" -- "${sources[@]}" 2>/dev/null || echo 0)"
-                    if [ "${count:-0}" -gt 0 ]; then
-                        stale_lines+=("  STALE: ${rel} (${count} commits since ${note_sha:0:7})")
+                fi
+                if [ "${#unverifiable_details[@]}" -gt 0 ]; then
+                    if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                        unverifiable_details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
                     fi
+                    [ "${count:-0}" -gt 0 ] && unverifiable_details+=("${count} commits since ${note_sha:0:7}")
+                    stale_lines+=("  UNVERIFIABLE: ${rel} ($(fm_join_details "${unverifiable_details[@]}"))")
+                elif [ "${count:-0}" -gt 0 ] || [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                    details=()
+                    [ "${count:-0}" -gt 0 ] && details+=("${count} commits since ${note_sha:0:7}")
+                    if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then
+                        details+=("working-tree changes: $(fm_format_paths "${FM_MATCHED_DIRTY_PATHS[@]}")")
+                    fi
+                    stale_lines+=("  STALE: ${rel} ($(fm_join_details "${details[@]}"))")
                 fi
             else
                 stale_lines+=("  UNVERIFIABLE: ${rel} (sha ${note_sha:0:7} is not an ancestor of HEAD)")
