@@ -93,10 +93,17 @@ Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user 
 "$AI_INDEX_SKILL_DIR/scripts/stale-check.sh" <repo-name>     # per-note staleness table, works from any cwd
 ```
 
-Then read `repos/<repo-name>/*.md` directly. Never repeat a stale note's claim without
-re-verifying against its `sources` first. `groups/*.md` notes explain *why* two repos are
-related (shared team, shared product, API contract) - read those to know which related-repo
-notes are actually relevant to the current task.
+Then read the relevant `repos/<repo-name>/*.md` notes directly. Never repeat a stale note's
+claim without re-verifying against its `sources` first. `groups/*.md` notes explain *why* two
+repos are related (shared team, shared product, API contract) - read those to know which
+related-repo notes are relevant to the current task.
+
+`related` and group membership are discovery hints, not freshness dependencies. When a task
+depends on another repository's contract, check that repository's relevant note and status
+before relying on the contract. A note's SHA verifies sources only in its own repository. If
+the other repository has no relevant fresh note, inspect the specific contract there instead
+of treating the local note as proof. Keep notes repository-specific and linked; do not add
+cross-repository SHA maps or duplicate contract details unnecessarily.
 
 ### 3. Capture (after non-trivial investigation)
 

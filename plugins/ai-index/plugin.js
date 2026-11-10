@@ -18,6 +18,7 @@ const STATUS_UNAVAILABLE = '[ai-index] status unavailable. Run the ai-index stat
 const AI_INDEX_GUIDANCE = [
   'ai-index workflow: Before analyzing or re-reviewing repository code for information, check the ai-index status and read applicable notes first.',
   'Read fresh notes before their source files; for stale or unverifiable notes, re-check only their recorded sources.',
+  'For cross-repo contracts, check the relevant related-repo note and status; if no fresh note exists, inspect that repo\'s specific contract. A local note SHA does not verify another repo.',
   'After non-trivial investigation, record significant durable findings with the ai-index skill and run note-touch.sh. Skip one-off findings.',
 ].join(' ');
 

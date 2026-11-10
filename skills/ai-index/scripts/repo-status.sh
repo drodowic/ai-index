@@ -85,15 +85,17 @@ if ! branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null)" || \
 fi
 notes_dir="${INDEX_ROOT}/repos/${repo}"
 
+has_notes=true
 if [ ! -d "$notes_dir" ] || [ -z "$(find "$notes_dir" -type f -name '*.md' 2>/dev/null)" ]; then
-    echo "[ai-index] repo=${repo} - no index notes yet. Capture findings with skill \`ai-index\`."
-    exit 0
+    has_notes=false
 fi
 
 notes=()
 stale_lines=()
 related_from_notes=()
-fm_collect_status "$toplevel"
+if [ "$has_notes" = true ]; then
+    fm_collect_status "$toplevel"
+fi
 
 while IFS= read -r -d '' note; do
     rel="${note#"${notes_dir}"/}"
@@ -170,7 +172,23 @@ while IFS= read -r -d '' note; do
 
     mapfile -t note_related < <(fm_list "$note" related)
     related_from_notes+=("${note_related[@]}")
-done < <(find "$notes_dir" -type f -name '*.md' -print0 | sort -z)
+done < <(find "$notes_dir" -type f -name '*.md' -print0 2>/dev/null | sort -z)
+
+# A related link is a relationship, not a one-way dependency. Include repos
+# whose notes point at this repo so those notes can be discovered from either side.
+related_from_reverse_links=()
+repos_dir="${INDEX_ROOT}/repos"
+if [ -d "$repos_dir" ]; then
+    while IFS= read -r -d '' note; do
+        relative_note="${note#"${repos_dir}"/}"
+        note_repo="${relative_note%%/*}"
+        [ "$note_repo" = "$repo" ] && continue
+        mapfile -t note_related < <(fm_list "$note" related)
+        if printf '%s\n' "${note_related[@]:-}" | grep -qxF "$repo"; then
+            related_from_reverse_links+=("$note_repo")
+        fi
+    done < <(find "$repos_dir" -type f -name '*.md' -print0 2>/dev/null)
+fi
 
 # Group notes that list this repo also count as "related to" every other repo they list.
 related_from_groups=()
@@ -185,13 +203,23 @@ if [ -d "${INDEX_ROOT}/groups" ]; then
     done < <(find "${INDEX_ROOT}/groups" -type f -name '*.md' -print0 2>/dev/null)
 fi
 
-echo "[ai-index] repo=${repo} @ ${branch} ${head_sha}"
-echo "  notes: $(IFS=,; echo "${notes[*]}")"
+if [ "$has_notes" = true ]; then
+    echo "[ai-index] repo=${repo} @ ${branch} ${head_sha}"
+    echo "  notes: $(IFS=,; echo "${notes[*]}")"
+else
+    echo "[ai-index] repo=${repo} - no index notes yet. Capture findings with skill \`ai-index\`."
+fi
 for line in "${stale_lines[@]:-}"; do
     [ -n "$line" ] && echo "$line"
 done
 
-mapfile -t related_repos < <(printf '%s\n' "${related_from_notes[@]:-}" "${related_from_groups[@]:-}" | grep -v '^$' | sort -u)
+mapfile -t related_repos < <(
+    printf '%s\n' \
+        "${related_from_notes[@]:-}" \
+        "${related_from_reverse_links[@]:-}" \
+        "${related_from_groups[@]:-}" |
+        grep -v '^$' | sort -u
+)
 if [ "${#related_repos[@]}" -gt 0 ]; then
     related_summary=()
     for r in "${related_repos[@]}"; do
