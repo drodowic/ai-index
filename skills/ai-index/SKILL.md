@@ -49,8 +49,8 @@ lazily.
 ### 1. Read (do this first, before analyzing code)
 
 ```
-scripts/repo-status.sh [path]      # defaults to $PWD; the ai-index opencode plugin already
-                                    # printed this digest into context at session start
+scripts/repo-status.sh [path]      # defaults to $PWD; the plugin refreshes status before
+                                    # each primary model request
 ```
 
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
