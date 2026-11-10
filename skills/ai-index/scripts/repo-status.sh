@@ -15,12 +15,69 @@ ai_index_load_config
 fm_require_tools
 
 INDEX_ROOT="${AI_INDEX_DOCS_ROOT}"
-TARGET="${1:-$PWD}"
+GIT_ROOT="${AI_INDEX_GIT_ROOT}"
+TARGET="$PWD"
+EXPLICIT_REPO=""
+TARGET_SET=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --repo)
+            if [ "$#" -lt 2 ] || [ -z "$2" ] || [ -n "$EXPLICIT_REPO" ]; then
+                echo "usage: repo-status.sh [path] [--repo <repo-name>]" >&2
+                exit 1
+            fi
+            EXPLICIT_REPO="$2"
+            shift 2
+            ;;
+        *)
+            if [ "$TARGET_SET" = true ]; then
+                echo "usage: repo-status.sh [path] [--repo <repo-name>]" >&2
+                exit 1
+            fi
+            TARGET="$1"
+            TARGET_SET=true
+            shift
+            ;;
+    esac
+done
 
 toplevel="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -z "$toplevel" ] && exit 0   # not a git repo - silent, not an error
+[ -z "$toplevel" ] && {
+    [ -z "$EXPLICIT_REPO" ] && exit 0   # not a git repo - silent, not an error
+    echo "ai-index: ${TARGET} is not a Git worktree; cannot resolve --repo ${EXPLICIT_REPO}" >&2
+    exit 1
+}
 
-repo="$(basename "$toplevel")"
+if ! target_common_dir="$(fm_git_common_dir "$toplevel")"; then
+    echo "ai-index: Git check failed while resolving common directory for ${toplevel}" >&2
+    exit 1
+fi
+
+if [ -n "$EXPLICIT_REPO" ]; then
+    if [[ "$EXPLICIT_REPO" == */* || "$EXPLICIT_REPO" == "." || "$EXPLICIT_REPO" == ".." ]] || \
+       ! configured_common_dir="$(fm_git_common_dir "${GIT_ROOT}/${EXPLICIT_REPO}")"; then
+        echo "ai-index: no configured repo named '${EXPLICIT_REPO}' under ${GIT_ROOT}" >&2
+        exit 1
+    fi
+    if [ "$configured_common_dir" != "$target_common_dir" ]; then
+        echo "ai-index: ${TARGET} does not belong to configured repo '${EXPLICIT_REPO}'" >&2
+        exit 1
+    fi
+    repo="$EXPLICIT_REPO"
+else
+    fm_configured_repo_keys_for_common_dir "$target_common_dir"
+    if [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -gt 1 ]; then
+        matches="$(IFS=,; printf '%s' "${FM_CONFIGURED_REPO_KEYS[*]}")"
+        echo "ai-index: ambiguous repository identity for ${toplevel}; common Git directory matches configured repos: ${matches}. Rerun with --repo <repo-name>." >&2
+        exit 1
+    elif [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -eq 1 ]; then
+        repo="${FM_CONFIGURED_REPO_KEYS[0]}"
+    else
+        # Preserve basename identities for repositories outside the configured root.
+        repo="$(basename "$toplevel")"
+    fi
+fi
+
 if ! branch="$(git -C "$toplevel" rev-parse --abbrev-ref HEAD 2>/dev/null)" || \
    ! head_sha="$(git -C "$toplevel" rev-parse --short HEAD 2>/dev/null)"; then
     echo "ai-index: Git check failed while resolving repository HEAD for ${toplevel}" >&2

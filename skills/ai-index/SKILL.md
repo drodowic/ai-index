@@ -49,12 +49,15 @@ lazily.
 ### 1. Read (do this first, before analyzing code)
 
 ```
-scripts/repo-status.sh [path]      # defaults to $PWD; the plugin refreshes status before
-                                    # each primary model request
+scripts/repo-status.sh [path] [--repo <repo-name>]  # path defaults to $PWD
 ```
 
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
-have notes worth checking. It is silent if the path isn't a git repo.
+have notes worth checking. It is silent if the path isn't a git repo. Linked worktrees map to
+the configured checkout or worktree sharing their Git common directory; separate clones remain
+separate.
+If multiple configured repo keys share that directory, rerun with `--repo <repo-name>` rather
+than letting the script guess. The plugin refreshes status before each primary model request.
 
 Freshness checks include staged and unstaged changes, plus non-ignored untracked files under
 declared sources. Ignored paths and sources outside the repository are `UNVERIFIABLE`: Git
@@ -118,12 +121,14 @@ Content rules (full detail in `how-to-use.md`):
 After writing or editing a note:
 
 ```
-scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>
+scripts/note-touch.sh <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
 ```
 
 `note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
 working-tree changes, ignored paths, or paths outside the repository. Resolve those changes or
-verify the source another way first.
+verify the source another way first. When run inside a linked worktree belonging to the note's
+configured repo, it stamps that worktree's `HEAD`; otherwise it uses the configured checkout.
+Use `--worktree` to select a specific worktree when the configured identity is ambiguous.
 
 ### 4. Registry maintenance
 

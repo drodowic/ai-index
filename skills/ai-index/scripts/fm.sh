@@ -77,6 +77,47 @@ FM_SOURCE_LIST_ERROR=""
 FM_SOURCE_VALIDATION_ERROR=""
 FM_LITERAL_SOURCE_PATHS=()
 FM_SOURCE_IS_ROOT=false
+FM_CONFIGURED_REPO_KEYS=()
+
+# Print the absolute Git common directory for a worktree. Unlike its top-level
+# directory, this is shared by linked worktrees and differs between clones.
+fm_git_common_dir() {
+    local path="$1" toplevel common_dir
+    toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    common_dir="$(git -C "$toplevel" rev-parse --git-common-dir 2>/dev/null)" || return 1
+    [[ "$common_dir" == /* ]] || common_dir="${toplevel}/${common_dir}"
+    (cd "$common_dir" 2>/dev/null && pwd -P)
+}
+
+# Set FM_CONFIGURED_REPO_KEYS to configured paths that identify the supplied
+# common directory. Prefer primary checkouts (.git directories) so linked
+# worktrees do not create duplicate identities; if no primary checkout is
+# configured, use matching configured worktrees (.git files). Symlinked .git
+# directories are included so conflicting identities are detected.
+fm_configured_repo_keys_for_common_dir() {
+    local common_dir="$1" gitdir candidate key repo_path
+    FM_CONFIGURED_REPO_KEYS=()
+    [ -d "$AI_INDEX_GIT_ROOT" ] || return 0
+
+    while IFS= read -r -d '' gitdir; do
+        if candidate="$(cd "$gitdir" 2>/dev/null && pwd -P)" && [ "$candidate" = "$common_dir" ]; then
+            key="$(basename "$(dirname "$gitdir")")"
+            FM_CONFIGURED_REPO_KEYS+=("$key")
+        fi
+    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
+        \( -type d -o -type l \) -name '.git' -print0 2>/dev/null)
+
+    [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -gt 0 ] && return 0
+
+    while IFS= read -r -d '' gitdir; do
+        repo_path="$(dirname "$gitdir")"
+        if candidate="$(fm_git_common_dir "$repo_path")" && [ "$candidate" = "$common_dir" ]; then
+            key="$(basename "$repo_path")"
+            FM_CONFIGURED_REPO_KEYS+=("$key")
+        fi
+    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
+        \( -type f -o -type l \) -name '.git' -print0 2>/dev/null)
+}
 
 fm_collect_status() {
     local toplevel="$1" entry status path previous_path status_file

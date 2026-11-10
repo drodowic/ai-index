@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # note-touch.sh - mark a note freshly verified: sets sha to the named repo's current HEAD
-# and verified to today's date, but refuses sources Git cannot verify as clean. Leaves the
-# rest of the note (frontmatter and body) untouched.
+# (or the active linked worktree's HEAD) and verified to today's date, but refuses sources
+# Git cannot verify as clean. Leaves the rest of the note untouched.
 #
-# Usage: note-touch.sh <note-path>
+# Usage: note-touch.sh <note-path> [--worktree <path>]
 
 set -euo pipefail
 
@@ -17,20 +17,79 @@ GIT_ROOT="${AI_INDEX_GIT_ROOT}"
 
 note="${1:-}"
 if [ -z "$note" ] || [ ! -f "$note" ]; then
-    echo "usage: note-touch.sh <note-path>" >&2
+    echo "usage: note-touch.sh <note-path> [--worktree <path>]" >&2
     exit 1
 fi
+shift
+
+WORKTREE_TARGET=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--worktree" ] && [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$WORKTREE_TARGET" ]; then
+        WORKTREE_TARGET="$2"
+        shift 2
+    else
+        echo "usage: note-touch.sh <note-path> [--worktree <path>]" >&2
+        exit 1
+    fi
+done
 
 repo="$(fm_get "$note" repo)"
 if [ -z "$repo" ]; then
     echo "ai-index: note ${note} has no 'repo' frontmatter field - cannot resolve HEAD" >&2
     exit 1
 fi
+if [[ "$repo" == */* || "$repo" == "." || "$repo" == ".." ]]; then
+    echo "ai-index: note ${note} has invalid 'repo' frontmatter - cannot resolve HEAD" >&2
+    exit 1
+fi
 
-toplevel="${GIT_ROOT}/${repo}"
-if [ ! -d "${toplevel}/.git" ]; then
+configured_path="${GIT_ROOT}/${repo}"
+if ! configured_toplevel="$(git -C "$configured_path" rev-parse --show-toplevel 2>/dev/null)"; then
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1
+fi
+if ! repo_common_dir="$(fm_git_common_dir "$configured_toplevel")"; then
+    echo "ai-index: Git check failed while resolving common directory for repo '${repo}'" >&2
+    exit 1
+fi
+
+fm_configured_repo_keys_for_common_dir "$repo_common_dir"
+if [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -gt 1 ]; then
+    repo_is_match=false
+    for configured_repo in "${FM_CONFIGURED_REPO_KEYS[@]}"; do
+        [ "$configured_repo" = "$repo" ] && repo_is_match=true
+    done
+    if [ "$repo_is_match" = false ]; then
+        matches="$(IFS=,; printf '%s' "${FM_CONFIGURED_REPO_KEYS[*]}")"
+        echo "ai-index: note repo '${repo}' conflicts with configured identities sharing its Git common directory: ${matches}" >&2
+        exit 1
+    fi
+    if [ -z "$WORKTREE_TARGET" ]; then
+        matches="$(IFS=,; printf '%s' "${FM_CONFIGURED_REPO_KEYS[*]}")"
+        echo "ai-index: ambiguous repository identity for '${repo}'; common Git directory matches: ${matches}. Rerun with --worktree <path> to confirm the intended worktree." >&2
+        exit 1
+    fi
+elif [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -eq 1 ] && [ "${FM_CONFIGURED_REPO_KEYS[0]}" != "$repo" ]; then
+    echo "ai-index: note repo '${repo}' resolves to configured identity '${FM_CONFIGURED_REPO_KEYS[0]}'; refusing to stamp under the wrong identity" >&2
+    exit 1
+fi
+
+if [ -n "$WORKTREE_TARGET" ]; then
+    if ! toplevel="$(git -C "$WORKTREE_TARGET" rev-parse --show-toplevel 2>/dev/null)"; then
+        echo "ai-index: --worktree target is not a Git worktree: ${WORKTREE_TARGET}" >&2
+        exit 1
+    fi
+    if ! target_common_dir="$(fm_git_common_dir "$toplevel")" || [ "$target_common_dir" != "$repo_common_dir" ]; then
+        echo "ai-index: worktree '${WORKTREE_TARGET}' does not belong to configured repo '${repo}'" >&2
+        exit 1
+    fi
+else
+    toplevel="$configured_toplevel"
+    if active_toplevel="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" && \
+       active_common_dir="$(fm_git_common_dir "$active_toplevel")" && \
+       [ "$active_common_dir" = "$repo_common_dir" ]; then
+        toplevel="$active_toplevel"
+    fi
 fi
 
 if ! fm_validate_source_list "$note"; then
