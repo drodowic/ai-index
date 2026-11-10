@@ -18,6 +18,17 @@ directly to the `ai-index/` directory inside the Obsidian vault; `AI_INDEX_GIT_R
 contains the Git project checkouts.
 Scripts live alongside this file in `scripts/` and require `jq` and `yq` (mikefarah/yq v4+,
 supports `--front-matter`).
+`AI_INDEX_SKILL_DIR` is not assumed to be preconfigured. Before running a script, assign it to
+the `Base directory for this skill` shown in the loaded skill metadata, then invoke the script
+through that variable. For example:
+
+```
+AI_INDEX_SKILL_DIR="<Base directory for this skill>"
+"$AI_INDEX_SKILL_DIR/scripts/<script>"
+```
+
+Do not run bare `scripts/<script>` paths, since the working directory is usually the repository
+being analyzed, not the skill directory.
 
 Every note carries YAML frontmatter recording the repo, the git SHA it was verified against,
 and the source paths its claims depend on - so staleness is computed exactly rather than
@@ -49,7 +60,7 @@ lazily.
 ### 1. Read (do this first, before analyzing code)
 
 ```
-scripts/repo-status.sh [path] [--repo <repo-name>]  # path defaults to $PWD
+"$AI_INDEX_SKILL_DIR/scripts/repo-status.sh" [path] [--repo <repo-name>]  # path defaults to $PWD
 ```
 
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
@@ -79,7 +90,7 @@ cannot reliably verify their contents, so use a different verification method fo
 Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user mention):
 
 ```
-scripts/stale-check.sh <repo-name>     # per-note staleness table, works from any cwd
+"$AI_INDEX_SKILL_DIR/scripts/stale-check.sh" <repo-name>     # per-note staleness table, works from any cwd
 ```
 
 Then read `repos/<repo-name>/*.md` directly. Never repeat a stale note's claim without
@@ -121,7 +132,7 @@ Content rules (full detail in `how-to-use.md`):
 After writing or editing a note:
 
 ```
-scripts/note-touch.sh <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
+"$AI_INDEX_SKILL_DIR/scripts/note-touch.sh" <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
 ```
 
 `note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
@@ -133,7 +144,7 @@ Use `--worktree` to select a specific worktree when the configured identity is a
 ### 4. Registry maintenance
 
 ```
-scripts/repo-registry.sh               # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
+"$AI_INDEX_SKILL_DIR/scripts/repo-registry.sh"  # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
 ```
 
 Regenerates the table in `index.md` between its marker comments; idempotent, preserves any
