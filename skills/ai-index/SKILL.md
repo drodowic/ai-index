@@ -18,6 +18,17 @@ directly to the `ai-index/` directory inside the Obsidian vault; `AI_INDEX_GIT_R
 contains the Git project checkouts.
 Scripts live alongside this file in `scripts/` and require `jq` and `yq` (mikefarah/yq v4+,
 supports `--front-matter`).
+`AI_INDEX_SKILL_DIR` is not assumed to be preconfigured. Before running a script, assign it to
+the `Base directory for this skill` shown in the loaded skill metadata, then invoke the script
+through that variable. For example:
+
+```
+AI_INDEX_SKILL_DIR="<Base directory for this skill>"
+"$AI_INDEX_SKILL_DIR/scripts/<script>"
+```
+
+Do not run bare `scripts/<script>` paths, since the working directory is usually the repository
+being analyzed, not the skill directory.
 
 Every note carries YAML frontmatter recording the repo, the git SHA it was verified against,
 and the source paths its claims depend on - so staleness is computed exactly rather than
@@ -49,32 +60,58 @@ lazily.
 ### 1. Read (do this first, before analyzing code)
 
 ```
-scripts/repo-status.sh [path]      # defaults to $PWD; the ai-index opencode plugin already
-                                    # printed this digest into context at session start
+"$AI_INDEX_SKILL_DIR/scripts/repo-status.sh" [path] [--repo <repo-name>]  # path defaults to $PWD
 ```
 
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
-have notes worth checking. It is silent if the path isn't a git repo.
+have notes worth checking. It is silent if the path isn't a git repo. Linked worktrees map to
+the configured checkout or worktree sharing their Git common directory; separate clones remain
+separate.
+If multiple configured repo keys share that directory, rerun with `--repo <repo-name>` rather
+than letting the script guess. The plugin refreshes status before each primary model request.
+
+Freshness checks include staged and unstaged changes, plus non-ignored untracked files under
+declared sources. Git freshness covers tracked content and non-ignored untracked changes, not
+ignored data: ignored descendants of directory sources are not inferred to be dependencies. An
+explicitly declared ignored, untracked file and sources outside the repository are
+`UNVERIFIABLE`; use a different verification method for those notes.
 
 - Read fresh notes directly - trust them, cite them (`per repos/<repo>/overview.md`) instead
   of re-reading the source they summarize.
-- For a `STALE` note: re-read only the `sources` paths listed in its frontmatter (not the
-  whole repo), update the note's prose to match, then run `note-touch.sh` (see Capture).
-- For `UNVERIFIABLE` (recorded sha not found - force-push, rebase, shallow clone): treat as
-  stale and re-verify from scratch.
+- For a `STALE` note: use its recorded `sources` as the starting scope. Re-read changed
+  sources, then follow newly relevant dependencies only as needed to verify the note's
+  claims. Add dependencies used to `sources`, update the prose, and run `note-touch.sh`
+  only after verification (see Capture). Do not reread the whole repo unless the claims
+  require it.
+- For `UNVERIFIABLE` (recorded sha not found, or not an ancestor of the current checkout):
+  treat as stale and re-verify its claims against current sources. Use recorded `sources`
+  as starting points, not as a complete list; follow newly relevant dependencies as needed
+  and add them to `sources`. Restamp only after verification. The latter can mean the note
+  came from another branch.
+- Missing SHAs, empty or invalid source lists, sources not tracked at the recorded SHA, and
+  Git check failures are also `UNVERIFIABLE`. A source deleted after its recorded SHA is
+  `STALE`. Source paths are treated literally, not as Git pathspec patterns.
 
 ### 2. Cross-repo lookup
 
 Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user mention):
 
 ```
-scripts/stale-check.sh <repo-name>     # per-note staleness table, works from any cwd
+"$AI_INDEX_SKILL_DIR/scripts/stale-check.sh" <repo-name>     # per-note staleness table, works from any cwd
 ```
 
-Then read `repos/<repo-name>/*.md` directly. Never repeat a stale note's claim without
-re-verifying against its `sources` first. `groups/*.md` notes explain *why* two repos are
-related (shared team, shared product, API contract) - read those to know which related-repo
-notes are actually relevant to the current task.
+Then read the relevant `repos/<repo-name>/*.md` notes directly. Never repeat a stale note's
+claim without re-verifying it against current sources, starting with its `sources` and
+following newly relevant dependencies as needed. `groups/*.md` notes explain *why* two repos
+are related (shared team, shared product, API contract) - read those to know which related-repo
+notes are relevant to the current task.
+
+`related` and group membership are discovery hints, not freshness dependencies. When a task
+depends on another repository's contract, check that repository's relevant note and status
+before relying on the contract. A note's SHA verifies sources only in its own repository. If
+the other repository has no relevant fresh note, inspect the specific contract there instead
+of treating the local note as proof. Keep notes repository-specific and linked; do not add
+cross-repository SHA maps or duplicate contract details unnecessarily.
 
 ### 3. Capture (after non-trivial investigation)
 
@@ -110,13 +147,20 @@ Content rules (full detail in `how-to-use.md`):
 After writing or editing a note:
 
 ```
-scripts/note-touch.sh <note-path>      # sets sha=<repo HEAD>, verified=<today>
+"$AI_INDEX_SKILL_DIR/scripts/note-touch.sh" <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
 ```
+
+`note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
+working-tree changes, explicitly declared ignored files, or paths outside the repository.
+Resolve those changes or verify the source another way first. When run inside a linked worktree
+belonging to the note's configured repo, it stamps that worktree's `HEAD`; otherwise it uses the
+configured checkout. Use `--worktree` to select a specific worktree when the configured identity
+is ambiguous.
 
 ### 4. Registry maintenance
 
 ```
-scripts/repo-registry.sh               # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
+"$AI_INDEX_SKILL_DIR/scripts/repo-registry.sh"  # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
 ```
 
 Regenerates the table in `index.md` between its marker comments; idempotent, preserves any

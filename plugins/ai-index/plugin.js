@@ -13,10 +13,12 @@ import { Plugin } from '@opencode/plugin';
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const STATUS_SCRIPT = join(here, '..', '..', 'skills', 'ai-index', 'scripts', 'repo-status.sh');
-const SESSION_HOOKS = ['context', 'compaction', 'generate', 'title'];
+const AUXILIARY_SESSION_HOOKS = ['compaction', 'generate', 'title'];
+const STATUS_UNAVAILABLE = '[ai-index] status unavailable. Run the ai-index status check before trusting notes.';
 const AI_INDEX_GUIDANCE = [
   'ai-index workflow: Before analyzing or re-reviewing repository code for information, check the ai-index status and read applicable notes first.',
-  'Read fresh notes before their source files; for stale or unverifiable notes, re-check only their recorded sources.',
+  'Read fresh notes before their source files. For stale notes, start with recorded sources and follow newly relevant dependencies only as needed to verify claims; add them to sources. For unverifiable notes, verify claims against current sources, expanding from recorded sources as needed, and restamp only after verification.',
+  'For cross-repo contracts, check the relevant related-repo note and status; if no fresh note exists, inspect that repo\'s specific contract. A local note SHA does not verify another repo.',
   'After non-trivial investigation, record significant durable findings with the ai-index skill and run note-touch.sh. Skip one-off findings.',
 ].join(' ');
 
@@ -28,9 +30,9 @@ async function computeDigest(target) {
       // directly at ai-index/, and inherited environment values can override its defaults.
       env: process.env,
     });
-    return stdout.trim();
+    return stdout.trim() || STATUS_UNAVAILABLE;
   } catch {
-    return '';
+    return '[ai-index] status unavailable (Git check failed or timed out). Run the ai-index status check before trusting notes.';
   }
 }
 
@@ -38,58 +40,9 @@ export default Plugin.define({
   id: 'ai-index',
 
   async setup(ctx) {
-    const digests = new Map();
-    const refreshes = new Map();
     const sessionTargets = new Map();
-    const sessionStatusTargets = new Map();
-    const initialTarget = resolve(ctx.location.directory);
-    let initialSessionUsed = false;
-
-    async function refresh(target) {
-      const directory = resolve(target || ctx.location.directory);
-      const previous = refreshes.get(directory);
-      const pending = (async () => {
-        // Serialize refreshes for one target. A session lifecycle refresh still runs
-        // after an initial/on-demand refresh, even when the target is unchanged.
-        if (previous) await previous;
-        const digest = await computeDigest(directory);
-        digests.set(directory, digest);
-        return digest;
-      })();
-
-      refreshes.set(directory, pending);
-      try {
-        return await pending;
-      } finally {
-        if (refreshes.get(directory) === pending) refreshes.delete(directory);
-      }
-    }
-
-    async function digestFor(target) {
-      const directory = resolve(target || ctx.location.directory);
-      if (refreshes.has(directory)) return refreshes.get(directory);
-      if (digests.has(directory)) return digests.get(directory);
-      return refresh(directory);
-    }
-
-    async function digestForSession(sessionID, target) {
-      const directory = resolve(target || ctx.location.directory);
-      sessionTargets.set(sessionID, directory);
-      if (sessionStatusTargets.get(sessionID) === directory) return digestFor(directory);
-
-      sessionStatusTargets.set(sessionID, directory);
-      if (!initialSessionUsed && directory === initialTarget) {
-        // Reuse setup's status for the first session when its session.created
-        // event has not arrived yet. Later sessions in the same repo refresh.
-        initialSessionUsed = true;
-        return digestFor(directory);
-      }
-
-      // A session's first request (or a moved session) refreshes even if another
-      // session has already cached this directory.
-      if (refreshes.has(directory)) return refreshes.get(directory);
-      return refresh(directory);
-    }
+    const sessionDigests = new Map();
+    const sessionStatusRequests = new Map();
 
     async function targetForSession(sessionID) {
       const knownTarget = sessionTargets.get(sessionID);
@@ -103,23 +56,46 @@ export default Plugin.define({
       } catch {
         // Preserve best-effort context injection if the session is no longer
         // available or its location cannot be resolved.
-        return ctx.location.directory;
+        const target = resolve(ctx.location.directory);
+        sessionTargets.set(sessionID, target);
+        return target;
       }
     }
 
-    async function addAiIndexContext(event) {
+    async function addAiIndexContext(event, refreshStatus) {
       const target = await targetForSession(event.sessionID);
-      const digest = await digestForSession(event.sessionID, target);
+      let digest;
+      if (refreshStatus) {
+        // `context` is the primary agent loop hook and runs before each model
+        // request, including tool-driven continuations. Never reuse its prior
+        // result here: Git and note metadata are checked once per request.
+        const request = {};
+        sessionStatusRequests.set(event.sessionID, request);
+        sessionDigests.set(event.sessionID, { directory: target, digest: STATUS_UNAVAILABLE });
+        digest = await computeDigest(target);
+        if (
+          sessionStatusRequests.get(event.sessionID) === request &&
+          sessionTargets.get(event.sessionID) === target
+        ) {
+          sessionDigests.set(event.sessionID, { directory: target, digest });
+        }
+      } else {
+        // Auxiliary requests may reuse the latest primary result, but must not
+        // fall back to setup-time or previous-location status.
+        const current = sessionDigests.get(event.sessionID);
+        digest = current?.directory === target ? current.digest : STATUS_UNAVAILABLE;
+      }
       const text = digest
         ? `${AI_INDEX_GUIDANCE}\n\nCurrent ai-index status:\n${digest}`
         : AI_INDEX_GUIDANCE;
       event.system.push({ type: 'text', text });
     }
 
-    // V2 splits model requests by purpose. Register each one so the status and
-    // note-first reminder are available on primary and auxiliary requests.
-    for (const kind of SESSION_HOOKS) {
-      await ctx.session.hook(kind, addAiIndexContext);
+    // Refresh before every primary agent-loop request. Auxiliary model calls
+    // reuse that session's latest result rather than repeating Git work.
+    await ctx.session.hook('context', (event) => addAiIndexContext(event, true));
+    for (const kind of AUXILIARY_SESSION_HOOKS) {
+      await ctx.session.hook(kind, (event) => addAiIndexContext(event, false));
     }
 
     const controller = new AbortController();
@@ -131,26 +107,24 @@ export default Plugin.define({
         })) {
           if (event.type === 'session.deleted') {
             sessionTargets.delete(event.data.sessionID);
-            sessionStatusTargets.delete(event.data.sessionID);
+            sessionDigests.delete(event.data.sessionID);
+            sessionStatusRequests.delete(event.data.sessionID);
             continue;
           }
 
           const { sessionID, location } = event.data;
           const directory = resolve(location.directory);
+          const previousDirectory = sessionTargets.get(sessionID);
           sessionTargets.set(sessionID, directory);
-          sessionStatusTargets.delete(sessionID);
-          await refresh(directory);
-          sessionStatusTargets.set(sessionID, directory);
+          if (previousDirectory !== directory) {
+            sessionDigests.delete(sessionID);
+            sessionStatusRequests.delete(sessionID);
+          }
         }
       } catch {
         // An unavailable or closing event stream must not affect chat turns.
       }
     })();
-
-    // Covers one-shot runs and the race where the first session event precedes
-    // event dispatch. The event refreshes again for subsequent sessions, even
-    // when they use this same directory.
-    await refresh(initialTarget);
 
     return () => controller.abort();
   },

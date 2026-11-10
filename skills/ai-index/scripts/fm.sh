@@ -46,7 +46,376 @@ fm_list() {
     yq --front-matter=extract "(.${key} // [])[]" "$file" 2>/dev/null
 }
 
+# Check the YAML shape before fm_list flattens values into lines. Only a
+# nonempty sequence of nonempty strings can be a source list.
+fm_validate_source_list() {
+    local file="$1" json
+    FM_SOURCE_LIST_ERROR=""
+    if ! json="$(yq --front-matter=extract -o=json '.sources // null' "$file" 2>/dev/null)"; then
+        FM_SOURCE_LIST_ERROR="invalid sources metadata"
+        return 1
+    fi
+    if jq -e '. == null or . == []' >/dev/null <<< "$json"; then
+        FM_SOURCE_LIST_ERROR="missing sources"
+        return 1
+    fi
+    if ! jq -e 'type == "array" and all(.[]; type == "string" and length > 0)' >/dev/null <<< "$json"; then
+        FM_SOURCE_LIST_ERROR="invalid sources metadata"
+        return 1
+    fi
+    return 0
+}
+
+# Working-tree and index state shared by the status scripts. Collect once per
+# run, then compare repository-relative paths against each note's declared sources.
+FM_DIRTY_PATHS=()
+FM_IGNORED_PATHS=()
+FM_FLAGGED_PATHS=()
+FM_MATCHED_DIRTY_PATHS=()
+FM_MATCHED_IGNORED_PATHS=()
+FM_MATCHED_FLAGGED_PATHS=()
+FM_EXTERNAL_SOURCES=()
+FM_SOURCE_LIST_ERROR=""
+FM_SOURCE_VALIDATION_ERROR=""
+FM_LITERAL_SOURCE_PATHS=()
+FM_SOURCE_IS_ROOT=false
+FM_CONFIGURED_REPO_KEYS=()
+FM_RESOLVED_COMMIT_HASH=""
+FM_COMMIT_HASH_ERROR=""
+
+# Resolve only a hexadecimal commit ID. --disambiguate enumerates object IDs
+# directly, without allowing a same-named ref to take precedence.
+fm_resolve_commit_hash() {
+    local toplevel="$1" value="$2" object_ids object_type
+    FM_RESOLVED_COMMIT_HASH=""
+    FM_COMMIT_HASH_ERROR=""
+
+    if [[ ! "$value" =~ ^[[:xdigit:]]+$ ]]; then
+        FM_COMMIT_HASH_ERROR="invalid commit hash"
+        return 1
+    fi
+
+    if ! object_ids="$(git -C "$toplevel" rev-parse --disambiguate="${value,,}" 2>/dev/null)"; then
+        FM_COMMIT_HASH_ERROR="commit hash not found or ambiguous in repo"
+        return 1
+    fi
+    if [ -z "$object_ids" ]; then
+        FM_COMMIT_HASH_ERROR="commit hash not found in repo"
+        return 1
+    fi
+    if [[ "$object_ids" == *$'\n'* ]]; then
+        FM_COMMIT_HASH_ERROR="commit hash is ambiguous in repo"
+        return 1
+    fi
+    if [[ ! "$object_ids" =~ ^[[:xdigit:]]+$ ]] || \
+       [[ "${object_ids,,}" != "${value,,}"* ]]; then
+        FM_COMMIT_HASH_ERROR="Git returned an invalid object ID"
+        return 1
+    fi
+
+    if ! object_type="$(git -C "$toplevel" cat-file -t "$object_ids" 2>/dev/null)"; then
+        FM_COMMIT_HASH_ERROR="Git check failed while reading commit object"
+        return 1
+    fi
+    if [ "$object_type" != "commit" ]; then
+        FM_COMMIT_HASH_ERROR="object identified by sha is not a commit"
+        return 1
+    fi
+
+    FM_RESOLVED_COMMIT_HASH="$object_ids"
+    return 0
+}
+
+# Print the absolute Git common directory for a worktree. Unlike its top-level
+# directory, this is shared by linked worktrees and differs between clones.
+fm_git_common_dir() {
+    local path="$1" toplevel common_dir
+    toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    common_dir="$(git -C "$toplevel" rev-parse --git-common-dir 2>/dev/null)" || return 1
+    [[ "$common_dir" == /* ]] || common_dir="${toplevel}/${common_dir}"
+    (cd "$common_dir" 2>/dev/null && pwd -P)
+}
+
+# Set FM_CONFIGURED_REPO_KEYS to configured paths that identify the supplied
+# common directory. Prefer primary checkouts (.git directories) so linked
+# worktrees do not create duplicate identities; if no primary checkout is
+# configured, use matching configured worktrees (.git files). Symlinked .git
+# directories are included so conflicting identities are detected.
+fm_configured_repo_keys_for_common_dir() {
+    local common_dir="$1" gitdir candidate key repo_path
+    FM_CONFIGURED_REPO_KEYS=()
+    [ -d "$AI_INDEX_GIT_ROOT" ] || return 0
+
+    while IFS= read -r -d '' gitdir; do
+        if candidate="$(cd "$gitdir" 2>/dev/null && pwd -P)" && [ "$candidate" = "$common_dir" ]; then
+            key="$(basename "$(dirname "$gitdir")")"
+            FM_CONFIGURED_REPO_KEYS+=("$key")
+        fi
+    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
+        \( -type d -o -type l \) -name '.git' -print0 2>/dev/null)
+
+    [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -gt 0 ] && return 0
+
+    while IFS= read -r -d '' gitdir; do
+        repo_path="$(dirname "$gitdir")"
+        if candidate="$(fm_git_common_dir "$repo_path")" && [ "$candidate" = "$common_dir" ]; then
+            key="$(basename "$repo_path")"
+            FM_CONFIGURED_REPO_KEYS+=("$key")
+        fi
+    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
+        \( -type f -o -type l \) -name '.git' -print0 2>/dev/null)
+}
+
+fm_collect_status() {
+    local toplevel="$1" entry status path previous_path status_file flagged_file tag
+    FM_DIRTY_PATHS=()
+    FM_IGNORED_PATHS=()
+    FM_FLAGGED_PATHS=()
+
+    status_file="$(mktemp)"
+    if ! git -C "$toplevel" status --porcelain=v1 -z --untracked-files=all --ignored=matching > "$status_file"; then
+        rm -f -- "$status_file"
+        echo "ai-index: unable to read Git working-tree status for ${toplevel}" >&2
+        return 1
+    fi
+
+    while IFS= read -r -d '' entry; do
+        status="${entry:0:2}"
+        path="${entry:3}"
+        if [ "$status" = "!!" ]; then
+            FM_IGNORED_PATHS+=("$path")
+        else
+            FM_DIRTY_PATHS+=("$path")
+        fi
+
+        # With -z, rename/copy records contain the destination followed by
+        # the original path as a second NUL-delimited field.
+        if [[ "$status" == *R* || "$status" == *C* ]]; then
+            if IFS= read -r -d '' previous_path; then
+                FM_DIRTY_PATHS+=("$previous_path")
+            fi
+        fi
+    done < "$status_file"
+    rm -f -- "$status_file"
+
+    flagged_file="$(mktemp)" || {
+        echo "ai-index: unable to collect Git index flags for ${toplevel}" >&2
+        return 1
+    }
+    if ! git -C "$toplevel" ls-files -v -z > "$flagged_file"; then
+        rm -f -- "$flagged_file"
+        echo "ai-index: unable to collect Git index flags for ${toplevel}" >&2
+        return 1
+    fi
+
+    # -v lowercases tags for assume-unchanged entries; S marks skip-worktree.
+    # Parse NUL-delimited records so unusual filenames remain intact.
+    while IFS= read -r -d '' entry; do
+        tag="${entry:0:1}"
+        if [[ "$tag" == "S" || "$tag" =~ [[:lower:]] ]]; then
+            FM_FLAGGED_PATHS+=("${entry:2}")
+        fi
+    done < "$flagged_file"
+    rm -f -- "$flagged_file"
+}
+
+fm_source_is_external() {
+    local source="$1" rest component depth=0
+    local -a components=()
+    [[ "$source" == /* ]] && return 0
+
+    # Sources are repository-relative paths. Reject paths that lexically escape
+    # the checkout; Git cannot establish freshness for external files.
+    rest="$source"
+    while [[ "$rest" == ./* ]]; do rest="${rest#./}"; done
+    IFS='/' read -r -a components <<< "$rest"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..)
+                depth=$((depth - 1))
+                [ "$depth" -lt 0 ] && return 0
+                ;;
+            *) depth=$((depth + 1)) ;;
+        esac
+    done
+    return 1
+}
+
+# Return a canonical repository-relative path. Git pathspec metacharacters are
+# ordinary filename characters here; callers pass the result with :(literal).
+fm_normalize_source() {
+    local source="$1" component
+    local -a components=() normalized=()
+    [[ -z "$source" || "$source" == /* ]] && return 1
+
+    IFS='/' read -r -a components <<< "$source"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..) return 1 ;;
+            *) normalized+=("$component") ;;
+        esac
+    done
+
+    if [ "${#normalized[@]}" -eq 0 ]; then
+        printf '.'
+    else
+        local IFS='/'
+        printf '%s' "${normalized[*]}"
+    fi
+}
+
+# Validate that every declared source names tracked content at a recorded
+# commit. A source may be a tracked file or a directory containing tracked
+# files. Failures are kept distinct from invalid metadata so callers never turn
+# a Git error into a zero-change/fresh result.
+fm_validate_sources_at_commit() {
+    local toplevel="$1" commit="$2" source normalized tree_file
+    shift 2
+    FM_SOURCE_VALIDATION_ERROR=""
+    FM_LITERAL_SOURCE_PATHS=()
+    FM_SOURCE_IS_ROOT=false
+
+    if [ "$#" -eq 0 ]; then
+        FM_SOURCE_VALIDATION_ERROR="missing sources"
+        return 1
+    fi
+
+    for source in "$@"; do
+        if ! normalized="$(fm_normalize_source "$source")"; then
+            if fm_source_is_external "$source"; then
+                FM_SOURCE_VALIDATION_ERROR="external or invalid source path: ${source}"
+            else
+                FM_SOURCE_VALIDATION_ERROR="invalid source path: ${source}"
+            fi
+            return 1
+        fi
+
+        if [ "$normalized" = "." ]; then
+            FM_SOURCE_IS_ROOT=true
+        else
+            FM_LITERAL_SOURCE_PATHS+=(":(literal)${normalized}")
+        fi
+
+        tree_file="$(mktemp)" || {
+            FM_SOURCE_VALIDATION_ERROR="Git check failed"
+            return 2
+        }
+        if [ "$normalized" = "." ]; then
+            if ! git -C "$toplevel" ls-tree -r --name-only -z "$commit" >"$tree_file" 2>/dev/null; then
+                rm -f -- "$tree_file"
+                FM_SOURCE_VALIDATION_ERROR="Git check failed"
+                return 2
+            fi
+        elif ! git -C "$toplevel" ls-tree -r --name-only -z "$commit" -- ":(literal)${normalized}" >"$tree_file" 2>/dev/null; then
+            rm -f -- "$tree_file"
+            FM_SOURCE_VALIDATION_ERROR="Git check failed"
+            return 2
+        fi
+
+        if [ ! -s "$tree_file" ]; then
+            rm -f -- "$tree_file"
+            FM_SOURCE_VALIDATION_ERROR="source not found at recorded SHA: ${source}"
+            return 1
+        fi
+        rm -f -- "$tree_file"
+    done
+}
+
+fm_paths_overlap() {
+    local source="$1" path="$2" component
+    local -a components=() normalized=()
+    while [[ "$source" == ./* ]]; do source="${source#./}"; done
+    IFS='/' read -r -a components <<< "$source"
+    for component in "${components[@]}"; do
+        case "$component" in
+            ""|.) ;;
+            ..)
+                if [ "${#normalized[@]}" -gt 0 ]; then
+                    normalized=("${normalized[@]:0:${#normalized[@]}-1}")
+                fi
+                ;;
+            *) normalized+=("$component") ;;
+        esac
+    done
+    local IFS='/'
+    source="${normalized[*]}"
+    while [[ "$path" == */ ]]; do path="${path%/}"; done
+
+    [ -z "$source" ] && return 0
+    [[ "$path" == "$source" || "$path" == "$source/"* || "$source" == "$path/"* ]]
+}
+
+# Compare repository-relative paths after removing harmless ./ and trailing
+# slash differences. Used for explicit ignored file sources; ignored descendants
+# are not dependencies of a declared directory source.
+fm_paths_equal() {
+    local left="$1" right="$2" normalized_left normalized_right
+    normalized_left="$(fm_normalize_source "$left")" || return 1
+    normalized_right="$(fm_normalize_source "$right")" || return 1
+    [ "$normalized_left" = "$normalized_right" ]
+}
+
+fm_check_sources() {
+    local toplevel="$1" source path normalized_source
+    shift
+    FM_MATCHED_DIRTY_PATHS=()
+    FM_MATCHED_IGNORED_PATHS=()
+    FM_MATCHED_FLAGGED_PATHS=()
+    FM_EXTERNAL_SOURCES=()
+
+    for source in "$@"; do
+        if fm_source_is_external "$source"; then
+            FM_EXTERNAL_SOURCES+=("$source")
+            continue
+        fi
+        for path in "${FM_DIRTY_PATHS[@]}"; do
+            if fm_paths_overlap "$source" "$path"; then
+                FM_MATCHED_DIRTY_PATHS+=("$path")
+            fi
+        done
+        for path in "${FM_FLAGGED_PATHS[@]}"; do
+            if fm_paths_overlap "$source" "$path"; then
+                FM_MATCHED_FLAGGED_PATHS+=("$path")
+            fi
+        done
+        # Ignored descendants (usually generated caches) are outside Git's
+        # freshness boundary for directory sources. Only treat an ignored path
+        # as relevant when the note explicitly names that file.
+        if normalized_source="$(fm_normalize_source "$source")" && \
+           [ ! -d "${toplevel}/${normalized_source}" ]; then
+            for path in "${FM_IGNORED_PATHS[@]}"; do
+                if fm_paths_equal "$normalized_source" "$path"; then
+                    FM_MATCHED_IGNORED_PATHS+=("$path")
+                fi
+            done
+        fi
+    done
+}
+
+fm_format_paths() {
+    local formatted="" path quoted
+    for path in "$@"; do
+        printf -v quoted '%q' "$path"
+        formatted+="${formatted:+, }${quoted}"
+    done
+    printf '%s' "$formatted"
+}
+
+fm_join_details() {
+    local separator="" detail
+    for detail in "$@"; do
+        printf '%s%s' "$separator" "$detail"
+        separator="; "
+    done
+}
+
 fm_set() {
     local file="$1" key="$2" value="$3"
-    yq --front-matter=process -i ".${key} = \"${value}\"" "$file"
+    if [ "$key" = "sha" ]; then
+        FM_SET_VALUE="$value" yq --front-matter=process -i ".${key} = strenv(FM_SET_VALUE) | .${key} style=\"double\"" "$file"
+    else
+        yq --front-matter=process -i ".${key} = \"${value}\"" "$file"
+    fi
 }
