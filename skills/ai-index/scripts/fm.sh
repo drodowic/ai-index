@@ -83,12 +83,10 @@ FM_CONFIGURED_REPO_KEYS=()
 FM_RESOLVED_COMMIT_HASH=""
 FM_COMMIT_HASH_ERROR=""
 
-# Resolve only a hexadecimal commit ID. rev-parse accepts symbolic refs and
-# revision expressions too, so validate the input before asking Git to resolve
-# it. Git rejects ambiguous abbreviations; verify the result still has the
-# supplied prefix to avoid accepting any other revision syntax.
+# Resolve only a hexadecimal commit ID. --disambiguate enumerates object IDs
+# directly, without allowing a same-named ref to take precedence.
 fm_resolve_commit_hash() {
-    local toplevel="$1" value="$2"
+    local toplevel="$1" value="$2" object_ids object_type
     FM_RESOLVED_COMMIT_HASH=""
     FM_COMMIT_HASH_ERROR=""
 
@@ -96,16 +94,35 @@ fm_resolve_commit_hash() {
         FM_COMMIT_HASH_ERROR="invalid commit hash"
         return 1
     fi
-    if ! FM_RESOLVED_COMMIT_HASH="$(git -C "$toplevel" rev-parse --verify --quiet "${value}^{commit}" 2>/dev/null)"; then
+
+    if ! object_ids="$(git -C "$toplevel" rev-parse --disambiguate="${value,,}" 2>/dev/null)"; then
         FM_COMMIT_HASH_ERROR="commit hash not found or ambiguous in repo"
         return 1
     fi
-    if [[ ! "$FM_RESOLVED_COMMIT_HASH" =~ ^[[:xdigit:]]+$ ]] || \
-       [[ "${FM_RESOLVED_COMMIT_HASH,,}" != "${value,,}"* ]]; then
-        FM_RESOLVED_COMMIT_HASH=""
-        FM_COMMIT_HASH_ERROR="invalid commit hash"
+    if [ -z "$object_ids" ]; then
+        FM_COMMIT_HASH_ERROR="commit hash not found in repo"
         return 1
     fi
+    if [[ "$object_ids" == *$'\n'* ]]; then
+        FM_COMMIT_HASH_ERROR="commit hash is ambiguous in repo"
+        return 1
+    fi
+    if [[ ! "$object_ids" =~ ^[[:xdigit:]]+$ ]] || \
+       [[ "${object_ids,,}" != "${value,,}"* ]]; then
+        FM_COMMIT_HASH_ERROR="Git returned an invalid object ID"
+        return 1
+    fi
+
+    if ! object_type="$(git -C "$toplevel" cat-file -t "$object_ids" 2>/dev/null)"; then
+        FM_COMMIT_HASH_ERROR="Git check failed while reading commit object"
+        return 1
+    fi
+    if [ "$object_type" != "commit" ]; then
+        FM_COMMIT_HASH_ERROR="object identified by sha is not a commit"
+        return 1
+    fi
+
+    FM_RESOLVED_COMMIT_HASH="$object_ids"
     return 0
 }
 
