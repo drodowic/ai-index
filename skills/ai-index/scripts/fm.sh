@@ -307,8 +307,19 @@ fm_paths_overlap() {
     [[ "$path" == "$source" || "$path" == "$source/"* || "$source" == "$path/"* ]]
 }
 
+# Compare repository-relative paths after removing harmless ./ and trailing
+# slash differences. Used for explicit ignored file sources; ignored descendants
+# are not dependencies of a declared directory source.
+fm_paths_equal() {
+    local left="$1" right="$2" normalized_left normalized_right
+    normalized_left="$(fm_normalize_source "$left")" || return 1
+    normalized_right="$(fm_normalize_source "$right")" || return 1
+    [ "$normalized_left" = "$normalized_right" ]
+}
+
 fm_check_sources() {
-    local source path
+    local toplevel="$1" source path normalized_source
+    shift
     FM_MATCHED_DIRTY_PATHS=()
     FM_MATCHED_IGNORED_PATHS=()
     FM_EXTERNAL_SOURCES=()
@@ -323,11 +334,17 @@ fm_check_sources() {
                 FM_MATCHED_DIRTY_PATHS+=("$path")
             fi
         done
-        for path in "${FM_IGNORED_PATHS[@]}"; do
-            if fm_paths_overlap "$source" "$path"; then
-                FM_MATCHED_IGNORED_PATHS+=("$path")
-            fi
-        done
+        # Ignored descendants (usually generated caches) are outside Git's
+        # freshness boundary for directory sources. Only treat an ignored path
+        # as relevant when the note explicitly names that file.
+        if normalized_source="$(fm_normalize_source "$source")" && \
+           [ ! -d "${toplevel}/${normalized_source}" ]; then
+            for path in "${FM_IGNORED_PATHS[@]}"; do
+                if fm_paths_equal "$normalized_source" "$path"; then
+                    FM_MATCHED_IGNORED_PATHS+=("$path")
+                fi
+            done
+        fi
     done
 }
 

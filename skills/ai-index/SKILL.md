@@ -71,8 +71,10 @@ If multiple configured repo keys share that directory, rerun with `--repo <repo-
 than letting the script guess. The plugin refreshes status before each primary model request.
 
 Freshness checks include staged and unstaged changes, plus non-ignored untracked files under
-declared sources. Ignored paths and sources outside the repository are `UNVERIFIABLE`: Git
-cannot reliably verify their contents, so use a different verification method for those notes.
+declared sources. Git freshness covers tracked content and non-ignored untracked changes, not
+ignored data: ignored descendants of directory sources are not inferred to be dependencies. An
+explicitly declared ignored, untracked file and sources outside the repository are
+`UNVERIFIABLE`; use a different verification method for those notes.
 
 - Read fresh notes directly - trust them, cite them (`per repos/<repo>/overview.md`) instead
   of re-reading the source they summarize.
@@ -149,10 +151,11 @@ After writing or editing a note:
 ```
 
 `note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
-working-tree changes, ignored paths, or paths outside the repository. Resolve those changes or
-verify the source another way first. When run inside a linked worktree belonging to the note's
-configured repo, it stamps that worktree's `HEAD`; otherwise it uses the configured checkout.
-Use `--worktree` to select a specific worktree when the configured identity is ambiguous.
+working-tree changes, explicitly declared ignored files, or paths outside the repository.
+Resolve those changes or verify the source another way first. When run inside a linked worktree
+belonging to the note's configured repo, it stamps that worktree's `HEAD`; otherwise it uses the
+configured checkout. Use `--worktree` to select a specific worktree when the configured identity
+is ambiguous.
 
 ### 4. Registry maintenance
 

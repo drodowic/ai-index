@@ -107,7 +107,7 @@ if ! fm_validate_sources_at_commit "$toplevel" "$head_sha" "${sources[@]}"; then
 fi
 
 fm_collect_status "$toplevel"
-fm_check_sources "${sources[@]}"
+fm_check_sources "$toplevel" "${sources[@]}"
 if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ] || [ "${#FM_MATCHED_IGNORED_PATHS[@]}" -gt 0 ] || [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
     echo "ai-index: refusing to stamp ${note}; verify these sources first." >&2
     if [ "${#FM_MATCHED_DIRTY_PATHS[@]}" -gt 0 ]; then

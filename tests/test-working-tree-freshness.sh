@@ -113,17 +113,29 @@ grep -Fq 'src/dir/new.txt' <<< "$table"
 touch_note_must_fail src/dir/new.txt
 rm "${REPO}/src/dir/new.txt"
 
-# Ignored descendants and external sources are unverifiable, not fresh.
+# Ignored generated descendants do not affect a directory source.
 mkdir -p "${REPO}/src/dir/cache"
 printf 'ignored source\n' > "${REPO}/src/dir/cache/data.txt"
 write_note src/dir/
 table="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/stale-check.sh" sample)"
+status="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/repo-status.sh" "$REPO")"
+grep -Eq 'area +[[:xdigit:]]+ +fresh +no commits to sources' <<< "$table"
+if grep -Eq '(STALE|UNVERIFIABLE): area' <<< "$status"; then
+    echo 'ignored cache made a clean directory source stale or unverifiable' >&2
+    exit 1
+fi
+touch_output="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/note-touch.sh" "$NOTE")"
+grep -Fq 'verified=' <<< "$touch_output"
+
+# An explicitly declared ignored file has no tracked baseline and stays unverifiable.
+write_note src/dir/cache/data.txt
+table="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/stale-check.sh" sample)"
 grep -Fq 'UNVERIFIABLE' <<< "$table"
-grep -Fq 'src/dir/cache' <<< "$table"
+grep -Fq 'src/dir/cache/data.txt' <<< "$table"
 status="$(HOME="$HOME_ROOT" "${REPO_ROOT}/skills/ai-index/scripts/repo-status.sh" "$REPO")"
 grep -Fq 'UNVERIFIABLE: area' <<< "$status"
-grep -Fq 'src/dir/cache' <<< "$status"
-touch_note_must_fail src/dir/cache
+grep -Fq 'src/dir/cache/data.txt' <<< "$status"
+touch_note_must_fail src/dir/cache/data.txt
 
 rm -rf "${REPO}/src/dir/cache"
 write_note ../external.txt

@@ -110,7 +110,7 @@ while IFS= read -r -d '' note; do
         source_list_valid=false
         sources=()
     fi
-    fm_check_sources "${sources[@]}"
+    fm_check_sources "$toplevel" "${sources[@]}"
     unverifiable_details=()
     if [ "${#FM_EXTERNAL_SOURCES[@]}" -gt 0 ]; then
         unverifiable_details+=("external sources: $(fm_format_paths "${FM_EXTERNAL_SOURCES[@]}")")
