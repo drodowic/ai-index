@@ -101,6 +101,12 @@ grep -Fq 'area' <<< "$worktree_stale"
 PARENT_ROOT="${TMP_DIR}/parent-checkout"
 mkdir -p "${PARENT_ROOT}/nested"
 git init -q -b main "$PARENT_ROOT"
+git -C "$PARENT_ROOT" config user.name 'ai-index test'
+git -C "$PARENT_ROOT" config user.email 'ai-index-test@example.invalid'
+printf 'parent source\n' > "${PARENT_ROOT}/tracked.txt"
+git -C "$PARENT_ROOT" add tracked.txt
+git -C "$PARENT_ROOT" commit -qm 'parent base'
+PARENT_SHA="$(git -C "$PARENT_ROOT" rev-parse HEAD)"
 cat > "${HOME_ROOT}/.config/opencode/ai-index.env" <<EOF
 AI_INDEX_DOCS_ROOT="${DOCS_ROOT}"
 AI_INDEX_GIT_ROOT="${PARENT_ROOT}"
@@ -110,6 +116,24 @@ if HOME="$HOME_ROOT" "$STALE_SCRIPT" nested >"${TMP_DIR}/nested.out" 2>"${TMP_DI
     exit 1
 fi
 grep -Fq 'is not a Git worktree root' "${TMP_DIR}/nested.err"
+NESTED_NOTE="${DOCS_ROOT}/repos/nested/area.md"
+mkdir -p "${DOCS_ROOT}/repos/nested"
+cat > "$NESTED_NOTE" <<EOF
+---
+repo: nested
+sha: ${PARENT_SHA}
+verified: "2026-01-01"
+sources:
+  - tracked.txt
+---
+# Test note
+EOF
+if HOME="$HOME_ROOT" "$TOUCH_SCRIPT" "$NESTED_NOTE" >"${TMP_DIR}/nested-touch.out" 2>"${TMP_DIR}/nested-touch.err"; then
+    echo 'note-touch unexpectedly accepted a parent repository for a nested configured path' >&2
+    exit 1
+fi
+grep -Fq 'is not a Git worktree root' "${TMP_DIR}/nested-touch.err"
+grep -Fq "$PARENT_SHA" "$NESTED_NOTE"
 cat > "${HOME_ROOT}/.config/opencode/ai-index.env" <<EOF
 AI_INDEX_DOCS_ROOT="${DOCS_ROOT}"
 AI_INDEX_GIT_ROOT="${GIT_ROOT}"

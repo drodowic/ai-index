@@ -48,6 +48,18 @@ if ! configured_toplevel="$(git -C "$configured_path" rev-parse --show-toplevel 
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1
 fi
+configured_checkout="$(cd "$configured_path" 2>/dev/null && pwd -P)" || {
+    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+    exit 1
+}
+configured_toplevel="$(cd "$configured_toplevel" 2>/dev/null && pwd -P)" || {
+    echo "ai-index: Git check failed while resolving configured checkout '${configured_checkout}'" >&2
+    exit 1
+}
+if [ "$configured_toplevel" != "$configured_checkout" ]; then
+    echo "ai-index: configured path '${configured_checkout}' is not a Git worktree root (Git top-level is '${configured_toplevel}')" >&2
+    exit 1
+fi
 if ! repo_common_dir="$(fm_git_common_dir "$configured_toplevel")"; then
     echo "ai-index: Git check failed while resolving common directory for repo '${repo}'" >&2
     exit 1
