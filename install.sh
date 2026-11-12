@@ -41,7 +41,29 @@ install_component() {
   log "Done: ${name} ${completed} at ${destination}."
 }
 
-install_component "skill" "${REPO_ROOT}/skills/ai-index" "${CONFIG_DIR}/skills/ai-index"
+SKILL_DIR="${CONFIG_DIR}/skills/ai-index"
+install_component "skill" "${REPO_ROOT}/skills/ai-index" "${SKILL_DIR}"
+
+set_skill_install_path() {
+  local skill_file="$1/SKILL.md"
+  local escaped_path temporary_file
+
+  if [[ ! -f "${skill_file}" ]] || ! grep -Fq -- '__AI_INDEX_SKILL_DIR__' "${skill_file}"; then
+    echo "Error: expected skill location placeholder in ${skill_file}" >&2
+    exit 1
+  fi
+
+  # %q produces a shell-safe value; escape sed's replacement metacharacters afterward.
+  printf -v escaped_path '%q' "$1"
+  escaped_path="$(printf '%s' "${escaped_path}" | sed 's/[\\&|]/\\&/g')"
+  temporary_file="$(mktemp "${skill_file}.XXXXXX")"
+  sed "s|__AI_INDEX_SKILL_DIR__|${escaped_path}|g" "${skill_file}" > "${temporary_file}"
+  cat "${temporary_file}" > "${skill_file}"
+  rm -f -- "${temporary_file}"
+  log "Set skill script location to ${1}."
+}
+
+set_skill_install_path "${SKILL_DIR}"
 install_component "plugin" "${REPO_ROOT}/plugins/ai-index" "${CONFIG_DIR}/plugins/ai-index"
 
 PLUGIN_DIR="${CONFIG_DIR}/plugins/ai-index"

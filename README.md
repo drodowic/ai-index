@@ -13,7 +13,9 @@ the user's Obsidian vault; this repository contains only the skill, scripts, and
 
 Run the installer from this checkout to copy the skill and plugin into the global OpenCode
 directories. It installs missing directories and updates existing ones. `OPENCODE_CONFIG_DIR`
-can override the default `~/.config/opencode` destination:
+can override the default `~/.config/opencode` destination. The installer also writes the
+installed skill's absolute directory into its `SKILL.md`, so its scripts can be run from any
+working directory:
 
 ```bash
 ./install.sh

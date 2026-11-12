@@ -16,19 +16,10 @@ A durable, cross-repo reference index. Configure `AI_INDEX_DOCS_ROOT` and
 `AI_INDEX_GIT_ROOT` in `~/.config/opencode/ai-index.env`. `AI_INDEX_DOCS_ROOT` points
 directly to the `ai-index/` directory inside the Obsidian vault; `AI_INDEX_GIT_ROOT`
 contains the Git project checkouts.
-Scripts live alongside this file in `scripts/` and require `jq` and `yq` (mikefarah/yq v4+,
-supports `--front-matter`).
-`AI_INDEX_SKILL_DIR` is not assumed to be preconfigured. Before running a script, assign it to
-the `Base directory for this skill` shown in the loaded skill metadata, then invoke the script
-through that variable. For example:
-
-```
-AI_INDEX_SKILL_DIR="<Base directory for this skill>"
-"$AI_INDEX_SKILL_DIR/scripts/<script>"
-```
-
-Do not run bare `scripts/<script>` paths, since the working directory is usually the repository
-being analyzed, not the skill directory.
+Scripts are in `__AI_INDEX_SKILL_DIR__/scripts/` and require `jq` and `yq` (mikefarah/yq v4+,
+supports `--front-matter`). Run each script by the full path shown below; do not use a shell
+variable for the path, since shell state may not persist between tool calls. If the placeholder
+remains, replace it with `Base directory for this skill` from the loaded skill metadata.
 
 Every note carries YAML frontmatter recording the repo, the git SHA it was verified against,
 and the source paths its claims depend on - so staleness is computed exactly rather than
@@ -60,7 +51,7 @@ lazily.
 ### 1. Read (do this first, before analyzing code)
 
 ```
-"$AI_INDEX_SKILL_DIR/scripts/repo-status.sh" [path] [--repo <repo-name>]  # path defaults to $PWD
+__AI_INDEX_SKILL_DIR__/scripts/repo-status.sh [path] [--repo <repo-name>]  # path defaults to $PWD
 ```
 
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
@@ -97,7 +88,7 @@ explicitly declared ignored, untracked file and sources outside the repository a
 Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user mention):
 
 ```
-"$AI_INDEX_SKILL_DIR/scripts/stale-check.sh" <repo-name>     # per-note staleness table, works from any cwd
+__AI_INDEX_SKILL_DIR__/scripts/stale-check.sh <repo-name>     # per-note staleness table, works from any cwd
 ```
 
 Then read the relevant `repos/<repo-name>/*.md` notes directly. Never repeat a stale note's
@@ -147,7 +138,7 @@ Content rules (full detail in `how-to-use.md`):
 After writing or editing a note:
 
 ```
-"$AI_INDEX_SKILL_DIR/scripts/note-touch.sh" <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
+__AI_INDEX_SKILL_DIR__/scripts/note-touch.sh <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
 ```
 
 `note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
@@ -160,7 +151,7 @@ is ambiguous.
 ### 4. Registry maintenance
 
 ```
-"$AI_INDEX_SKILL_DIR/scripts/repo-registry.sh"  # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
+__AI_INDEX_SKILL_DIR__/scripts/repo-registry.sh  # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
 ```
 
 Regenerates the table in `index.md` between its marker comments; idempotent, preserves any
