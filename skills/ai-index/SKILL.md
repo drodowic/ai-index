@@ -15,7 +15,9 @@ description: >
 A durable, cross-repo reference index. Configure `AI_INDEX_DOCS_ROOT` and
 `AI_INDEX_GIT_ROOT` in `~/.config/opencode/ai-index.env`. `AI_INDEX_DOCS_ROOT` points
 directly to the `ai-index/` directory inside the Obsidian vault; `AI_INDEX_GIT_ROOT`
-contains the Git project checkouts.
+contains the Git project checkouts, directly or in nested grouping directories (for example,
+`$AI_INDEX_GIT_ROOT/group/app-frontend`). Repo identity remains the checkout directory's
+basename, so names must be unique under `AI_INDEX_GIT_ROOT`.
 Scripts are in `__AI_INDEX_SKILL_DIR__/scripts/` and require `jq` and `yq` (mikefarah/yq v4+,
 supports `--front-matter`). Run each script by the full path shown below; do not use a shell
 variable for the path, since shell state may not persist between tool calls. If the placeholder
@@ -57,7 +59,8 @@ __AI_INDEX_SKILL_DIR__/scripts/repo-status.sh [path] [--repo <repo-name>]  # pat
 This prints: which notes exist, which are `STALE` or `UNVERIFIABLE`, and which related repos
 have notes worth checking. It is silent if the path isn't a git repo. Linked worktrees map to
 the configured checkout or worktree sharing their Git common directory; separate clones remain
-separate.
+separate. Configured checkout discovery recurses through grouping directories. `--repo` takes
+the unique checkout basename, not its grouping path.
 If multiple configured repo keys share that directory, rerun with `--repo <repo-name>` rather
 than letting the script guess. The plugin refreshes status before each primary model request.
 
@@ -90,6 +93,10 @@ Given a repo name (from `related:` in the digest, a `groups/*.md` note, or user 
 ```
 __AI_INDEX_SKILL_DIR__/scripts/stale-check.sh <repo-name>     # per-note staleness table, works from any cwd
 ```
+
+The repo name is the checkout directory's basename, including for nested checkouts. If that
+basename occurs more than once under `AI_INDEX_GIT_ROOT`, lookup stops as ambiguous rather than
+selecting the wrong notes or checkout.
 
 Then read the relevant `repos/<repo-name>/*.md` notes directly. Never repeat a stale note's
 claim without re-verifying it against current sources, starting with its `sources` and
@@ -141,7 +148,8 @@ After writing or editing a note:
 __AI_INDEX_SKILL_DIR__/scripts/note-touch.sh <note-path> [--worktree <path>]  # sets sha=<HEAD>, verified=<today>
 ```
 
-`note-touch.sh` refuses to stamp notes without valid tracked sources, or whose sources have
+`note-touch.sh` resolves the repo by its unique checkout basename anywhere under
+`AI_INDEX_GIT_ROOT`. It refuses to stamp notes without valid tracked sources, or whose sources have
 working-tree changes, explicitly declared ignored files, or paths outside the repository.
 Resolve those changes or verify the source another way first. When run inside a linked worktree
 belonging to the note's configured repo, it stamps that worktree's `HEAD`; otherwise it uses the
@@ -151,11 +159,12 @@ is ambiguous.
 ### 4. Registry maintenance
 
 ```
-__AI_INDEX_SKILL_DIR__/scripts/repo-registry.sh  # after cloning or removing a repo under $AI_INDEX_GIT_ROOT
+__AI_INDEX_SKILL_DIR__/scripts/repo-registry.sh  # after moving, cloning, or removing a repo under $AI_INDEX_GIT_ROOT
 ```
 
-Regenerates the table in `index.md` between its marker comments; idempotent, preserves any
-hand-written prose elsewhere in the file.
+Recursively discovers primary checkouts, then regenerates the table in `index.md` between its
+marker comments; idempotent, preserves any hand-written prose elsewhere in the file. Duplicate
+checkout basenames are rejected because notes are keyed by basename.
 
 ## Why this exists
 

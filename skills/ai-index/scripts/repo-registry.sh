@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # repo-registry.sh - regenerate the repo table in ai-index/index.md.
 #
-# Walks $AI_INDEX_GIT_ROOT for git repos and rewrites only the
+# Recursively walks $AI_INDEX_GIT_ROOT for Git repos and rewrites only the
 # region between the BEGIN/END registry markers in index.md, so hand-written prose in that
 # file survives repeated runs. Cheap: no code analysis, just `git remote`/`git branch`.
 #
@@ -33,9 +33,23 @@ shorten_remote() {
 }
 
 rows=""
-while IFS= read -r -d '' gitdir; do
-    repo_path="$(dirname "$gitdir")"
+repo_names=()
+repo_paths=()
+mapfile -d '' -t discovered_paths < <(fm_find_repo_paths "$GIT_ROOT" | sort -z)
+for repo_path in "${discovered_paths[@]}"; do
+    # Preserve registry behavior: list primary checkouts, not linked worktrees.
+    [ -d "${repo_path}/.git" ] && [ ! -L "${repo_path}/.git" ] || continue
     repo="$(basename "$repo_path")"
+
+    for i in "${!repo_names[@]}"; do
+        if [ "${repo_names[$i]}" = "$repo" ]; then
+            printf 'ai-index: duplicate repo name %q under %s (%q and %q); repo names must be unique\n' \
+                "$repo" "$GIT_ROOT" "${repo_paths[$i]}" "$repo_path" >&2
+            exit 1
+        fi
+    done
+    repo_names+=("$repo")
+    repo_paths+=("$repo_path")
 
     origin_url="$(git -C "$repo_path" remote get-url origin 2>/dev/null || true)"
     fork_url="$(git -C "$repo_path" remote get-url fork 2>/dev/null || true)"
@@ -52,7 +66,7 @@ while IFS= read -r -d '' gitdir; do
 
     rows="${rows}| ${repo} | \`${repo_path}\` | $(shorten_remote "$origin_url") | ${fork_flag} | ${branch} | ${note_count} |
 "
-done < <(find "$GIT_ROOT" -mindepth 2 -maxdepth 2 -type d -name '.git' -print0 | sort -z)
+done
 
 table="${BEGIN_MARKER}
 | repo | path | origin | fork | branch | notes |

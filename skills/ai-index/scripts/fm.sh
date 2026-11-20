@@ -136,34 +136,140 @@ fm_git_common_dir() {
     (cd "$common_dir" 2>/dev/null && pwd -P)
 }
 
+# Emit configured Git worktree roots as NUL-delimited paths. Organization or
+# other grouping directories are traversed; once a worktree is found, do not
+# descend into it (for example, into submodules or vendored repositories).
+fm_find_repo_paths() {
+    local root="$1" child
+    [ -d "$root" ] || return 0
+
+    while IFS= read -r -d '' child; do
+        if [ -e "${child}/.git" ] || [ -L "${child}/.git" ]; then
+            printf '%s\0' "$child"
+        else
+            fm_find_repo_paths "$child"
+        fi
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+}
+
+# Resolve an index repo key (the checkout directory's basename) anywhere under
+# AI_INDEX_GIT_ROOT. Keys remain path-independent, so existing notes survive
+# moving a checkout between grouping directories.
+fm_resolve_configured_repo_path() {
+    local key="$1" repo_path repo_path_seen direct_path direct_toplevel direct_checkout candidate seen
+    local -a common_dirs=() primary_paths=() worktree_paths=() resolution_paths=()
+    FM_RESOLVED_REPO_PATH=""
+    FM_REPO_RESOLUTION_ERROR=""
+    FM_MATCHING_REPO_PATHS=()
+
+    if [[ "$key" == */* || "$key" == "." || "$key" == ".." || -z "$key" ]]; then
+        FM_REPO_RESOLUTION_ERROR="invalid repo name '${key}'"
+        return 1
+    fi
+
+    while IFS= read -r -d '' repo_path; do
+        [ "$(basename "$repo_path")" = "$key" ] && FM_MATCHING_REPO_PATHS+=("$repo_path")
+    done < <(fm_find_repo_paths "$AI_INDEX_GIT_ROOT")
+
+    if [ "${#FM_MATCHING_REPO_PATHS[@]}" -gt 0 ]; then
+        for repo_path in "${FM_MATCHING_REPO_PATHS[@]}"; do
+            if [ -d "${repo_path}/.git" ]; then
+                primary_paths+=("$repo_path")
+            else
+                worktree_paths+=("$repo_path")
+            fi
+        done
+
+        # Prefer primary checkout names as repo keys. A same-named linked
+        # worktree is an alias, not a competing identity; use worktree names
+        # only when no primary checkout has the key.
+        if [ "${#primary_paths[@]}" -gt 0 ]; then
+            resolution_paths=("${primary_paths[@]}")
+        else
+            resolution_paths=("${worktree_paths[@]}")
+        fi
+
+        for repo_path in "${resolution_paths[@]}"; do
+            if ! candidate="$(fm_git_common_dir "$repo_path")"; then
+                FM_REPO_RESOLUTION_ERROR="Git check failed while resolving configured repo '${repo_path}'"
+                return 1
+            fi
+            seen=false
+            for repo_path_seen in "${common_dirs[@]}"; do
+                if [ "$repo_path_seen" = "$candidate" ]; then
+                    seen=true
+                    break
+                fi
+            done
+            [ "$seen" = true ] || common_dirs+=("$candidate")
+        done
+
+        if [ "${#common_dirs[@]}" -gt 1 ]; then
+            FM_REPO_RESOLUTION_ERROR="multiple repos named '${key}' under ${AI_INDEX_GIT_ROOT}: $(fm_format_paths "${resolution_paths[@]}")"
+            return 1
+        fi
+        if [ "${#primary_paths[@]}" -eq 1 ]; then
+            FM_RESOLVED_REPO_PATH="${primary_paths[0]}"
+            return 0
+        fi
+        if [ "${#primary_paths[@]}" -gt 1 ]; then
+            FM_REPO_RESOLUTION_ERROR="multiple primary checkouts named '${key}' under ${AI_INDEX_GIT_ROOT}: $(fm_format_paths "${primary_paths[@]}")"
+            return 1
+        fi
+        if [ "${#worktree_paths[@]}" -eq 1 ]; then
+            FM_RESOLVED_REPO_PATH="${worktree_paths[0]}"
+            return 0
+        fi
+        FM_REPO_RESOLUTION_ERROR="multiple linked worktrees named '${key}' under ${AI_INDEX_GIT_ROOT}: $(fm_format_paths "${worktree_paths[@]}")"
+        return 1
+    fi
+
+    # Preserve the useful safety diagnostic for a configured directory inside
+    # a parent checkout: Git's upward search must not mistake it for a repo.
+    direct_path="${AI_INDEX_GIT_ROOT}/${key}"
+    if [ -d "$direct_path" ] && \
+       direct_toplevel="$(git -C "$direct_path" rev-parse --show-toplevel 2>/dev/null)"; then
+        direct_checkout="$(cd "$direct_path" 2>/dev/null && pwd -P)" || direct_checkout="$direct_path"
+        direct_toplevel="$(cd "$direct_toplevel" 2>/dev/null && pwd -P)" || direct_toplevel=""
+        if [ -n "$direct_toplevel" ] && [ "$direct_toplevel" != "$direct_checkout" ]; then
+            FM_REPO_RESOLUTION_ERROR="configured path '${direct_checkout}' is not a Git worktree root (Git top-level is '${direct_toplevel}')"
+            return 1
+        fi
+    fi
+
+    FM_REPO_RESOLUTION_ERROR="no repo named '${key}' under ${AI_INDEX_GIT_ROOT}"
+    return 1
+}
+
 # Set FM_CONFIGURED_REPO_KEYS to configured paths that identify the supplied
 # common directory. Prefer primary checkouts (.git directories) so linked
 # worktrees do not create duplicate identities; if no primary checkout is
 # configured, use matching configured worktrees (.git files). Symlinked .git
 # directories are included so conflicting identities are detected.
 fm_configured_repo_keys_for_common_dir() {
-    local common_dir="$1" gitdir candidate key repo_path
+    local common_dir="$1" candidate key repo_path
+    local -a repo_paths=()
     FM_CONFIGURED_REPO_KEYS=()
     [ -d "$AI_INDEX_GIT_ROOT" ] || return 0
+    mapfile -d '' -t repo_paths < <(fm_find_repo_paths "$AI_INDEX_GIT_ROOT")
 
-    while IFS= read -r -d '' gitdir; do
-        if candidate="$(cd "$gitdir" 2>/dev/null && pwd -P)" && [ "$candidate" = "$common_dir" ]; then
-            key="$(basename "$(dirname "$gitdir")")"
-            FM_CONFIGURED_REPO_KEYS+=("$key")
+    for repo_path in "${repo_paths[@]}"; do
+        if [ -d "${repo_path}/.git" ] && \
+           candidate="$(fm_git_common_dir "$repo_path")" && [ "$candidate" = "$common_dir" ]; then
+            FM_CONFIGURED_REPO_KEYS+=("$(basename "$repo_path")")
         fi
-    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
-        \( -type d -o -type l \) -name '.git' -print0 2>/dev/null)
+    done
 
     [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -gt 0 ] && return 0
 
-    while IFS= read -r -d '' gitdir; do
-        repo_path="$(dirname "$gitdir")"
-        if candidate="$(fm_git_common_dir "$repo_path")" && [ "$candidate" = "$common_dir" ]; then
+    for repo_path in "${repo_paths[@]}"; do
+        if [ ! -d "${repo_path}/.git" ] && \
+           { [ -f "${repo_path}/.git" ] || [ -L "${repo_path}/.git" ]; } && \
+           candidate="$(fm_git_common_dir "$repo_path")" && [ "$candidate" = "$common_dir" ]; then
             key="$(basename "$repo_path")"
             FM_CONFIGURED_REPO_KEYS+=("$key")
         fi
-    done < <(find "$AI_INDEX_GIT_ROOT" -mindepth 2 -maxdepth 2 \
-        \( -type f -o -type l \) -name '.git' -print0 2>/dev/null)
+    done
 }
 
 fm_collect_status() {
