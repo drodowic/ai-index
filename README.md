@@ -37,8 +37,10 @@ cp -n ai-index.env.example ~/.config/opencode/ai-index.env
 ```
 
 `AI_INDEX_DOCS_ROOT` must point directly to the `ai-index/` directory. `AI_INDEX_GIT_ROOT`
-must point to the parent directory containing your project checkouts. The scripts require
-Bash, Git, `jq`, and mikefarah `yq` v4 or newer.
+must point to the parent directory containing your project checkouts; repos may be grouped in
+nested directories (for example, `group/app-frontend`). Repo directory names must be unique under
+that root because notes use the checkout basename as their key. The scripts require Bash, Git,
+`jq`, and mikefarah `yq` v4 or newer.
 
 To register the installed plugin, add its directory to the `plugins` array in
 `~/.config/opencode/opencode.json(c)`:

@@ -38,12 +38,11 @@ if [ -z "$repo" ]; then
     echo "ai-index: note ${note} has no 'repo' frontmatter field - cannot resolve HEAD" >&2
     exit 1
 fi
-if [[ "$repo" == */* || "$repo" == "." || "$repo" == ".." ]]; then
-    echo "ai-index: note ${note} has invalid 'repo' frontmatter - cannot resolve HEAD" >&2
+if ! fm_resolve_configured_repo_path "$repo"; then
+    echo "ai-index: ${FM_REPO_RESOLUTION_ERROR}" >&2
     exit 1
 fi
-
-configured_path="${GIT_ROOT}/${repo}"
+configured_path="$FM_RESOLVED_REPO_PATH"
 if ! configured_toplevel="$(git -C "$configured_path" rev-parse --show-toplevel 2>/dev/null)"; then
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1

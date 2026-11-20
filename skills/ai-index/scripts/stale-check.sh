@@ -23,16 +23,11 @@ if [ -z "$repo" ]; then
     exit 1
 fi
 
-if [[ "$repo" == */* || "$repo" == "." || "$repo" == ".." ]]; then
-    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
+if ! fm_resolve_configured_repo_path "$repo"; then
+    echo "ai-index: ${FM_REPO_RESOLUTION_ERROR}" >&2
     exit 1
 fi
-
-configured_path="${GIT_ROOT}/${repo}"
-if [ ! -d "$configured_path" ]; then
-    echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
-    exit 1
-fi
+configured_path="$FM_RESOLVED_REPO_PATH"
 configured_checkout="$(cd "$configured_path" 2>/dev/null && pwd -P)" || {
     echo "ai-index: no repo named '${repo}' under ${GIT_ROOT}" >&2
     exit 1

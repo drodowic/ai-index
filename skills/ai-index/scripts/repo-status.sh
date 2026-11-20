@@ -54,11 +54,14 @@ if ! target_common_dir="$(fm_git_common_dir "$toplevel")"; then
 fi
 
 if [ -n "$EXPLICIT_REPO" ]; then
-    if [[ "$EXPLICIT_REPO" == */* || "$EXPLICIT_REPO" == "." || "$EXPLICIT_REPO" == ".." ]] || \
-       ! configured_common_dir="$(fm_git_common_dir "${GIT_ROOT}/${EXPLICIT_REPO}")"; then
-        echo "ai-index: no configured repo named '${EXPLICIT_REPO}' under ${GIT_ROOT}" >&2
+    if ! fm_resolve_configured_repo_path "$EXPLICIT_REPO"; then
+        echo "ai-index: ${FM_REPO_RESOLUTION_ERROR}" >&2
         exit 1
     fi
+    configured_common_dir="$(fm_git_common_dir "$FM_RESOLVED_REPO_PATH")" || {
+        echo "ai-index: Git check failed while resolving configured repo '${EXPLICIT_REPO}'" >&2
+        exit 1
+    }
     if [ "$configured_common_dir" != "$target_common_dir" ]; then
         echo "ai-index: ${TARGET} does not belong to configured repo '${EXPLICIT_REPO}'" >&2
         exit 1
@@ -72,6 +75,18 @@ else
         exit 1
     elif [ "${#FM_CONFIGURED_REPO_KEYS[@]}" -eq 1 ]; then
         repo="${FM_CONFIGURED_REPO_KEYS[0]}"
+        if ! fm_resolve_configured_repo_path "$repo"; then
+            echo "ai-index: ${FM_REPO_RESOLUTION_ERROR}" >&2
+            exit 1
+        fi
+        configured_common_dir="$(fm_git_common_dir "$FM_RESOLVED_REPO_PATH")" || {
+            echo "ai-index: Git check failed while resolving configured repo '${repo}'" >&2
+            exit 1
+        }
+        if [ "$configured_common_dir" != "$target_common_dir" ]; then
+            echo "ai-index: ambiguous repository name '${repo}' under ${GIT_ROOT}; use unique repo directory names" >&2
+            exit 1
+        fi
     else
         # Preserve basename identities for repositories outside the configured root.
         repo="$(basename "$toplevel")"
