@@ -157,7 +157,7 @@ fm_find_repo_paths() {
 # moving a checkout between grouping directories.
 fm_resolve_configured_repo_path() {
     local key="$1" repo_path repo_path_seen direct_path direct_toplevel direct_checkout candidate seen
-    local -a common_dirs=() primary_paths=() worktree_paths=()
+    local -a common_dirs=() primary_paths=() worktree_paths=() resolution_paths=()
     FM_RESOLVED_REPO_PATH=""
     FM_REPO_RESOLUTION_ERROR=""
     FM_MATCHING_REPO_PATHS=()
@@ -173,6 +173,23 @@ fm_resolve_configured_repo_path() {
 
     if [ "${#FM_MATCHING_REPO_PATHS[@]}" -gt 0 ]; then
         for repo_path in "${FM_MATCHING_REPO_PATHS[@]}"; do
+            if [ -d "${repo_path}/.git" ]; then
+                primary_paths+=("$repo_path")
+            else
+                worktree_paths+=("$repo_path")
+            fi
+        done
+
+        # Prefer primary checkout names as repo keys. A same-named linked
+        # worktree is an alias, not a competing identity; use worktree names
+        # only when no primary checkout has the key.
+        if [ "${#primary_paths[@]}" -gt 0 ]; then
+            resolution_paths=("${primary_paths[@]}")
+        else
+            resolution_paths=("${worktree_paths[@]}")
+        fi
+
+        for repo_path in "${resolution_paths[@]}"; do
             if ! candidate="$(fm_git_common_dir "$repo_path")"; then
                 FM_REPO_RESOLUTION_ERROR="Git check failed while resolving configured repo '${repo_path}'"
                 return 1
@@ -185,15 +202,10 @@ fm_resolve_configured_repo_path() {
                 fi
             done
             [ "$seen" = true ] || common_dirs+=("$candidate")
-            if [ -d "${repo_path}/.git" ]; then
-                primary_paths+=("$repo_path")
-            else
-                worktree_paths+=("$repo_path")
-            fi
         done
 
         if [ "${#common_dirs[@]}" -gt 1 ]; then
-            FM_REPO_RESOLUTION_ERROR="multiple repos named '${key}' under ${AI_INDEX_GIT_ROOT}: $(fm_format_paths "${FM_MATCHING_REPO_PATHS[@]}")"
+            FM_REPO_RESOLUTION_ERROR="multiple repos named '${key}' under ${AI_INDEX_GIT_ROOT}: $(fm_format_paths "${resolution_paths[@]}")"
             return 1
         fi
         if [ "${#primary_paths[@]}" -eq 1 ]; then

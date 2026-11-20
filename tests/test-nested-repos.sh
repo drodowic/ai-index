@@ -12,6 +12,9 @@ REPO="${GIT_ROOT}/galaxy_ng"
 NESTED_REPO="${GIT_ROOT}/ansible/galaxy_ng"
 WORKTREE="${GIT_ROOT}/worktrees/galaxy_ng"
 NOTE="${DOCS_ROOT}/repos/galaxy_ng/overview.md"
+COLLIDING_REPO="${GIT_ROOT}/pulp/feature"
+COLLIDING_WORKTREE="${GIT_ROOT}/worktrees/feature"
+COLLIDING_NOTE="${DOCS_ROOT}/repos/feature/overview.md"
 STATUS_SCRIPT="${REPO_ROOT}/skills/ai-index/scripts/repo-status.sh"
 STALE_SCRIPT="${REPO_ROOT}/skills/ai-index/scripts/stale-check.sh"
 TOUCH_SCRIPT="${REPO_ROOT}/skills/ai-index/scripts/note-touch.sh"
@@ -70,6 +73,34 @@ worktree_status="$(HOME="$HOME_ROOT" "$STATUS_SCRIPT" "$WORKTREE")"
 grep -Fq "repo=galaxy_ng @ feature ${BASE_SHA:0:7}" <<< "$worktree_status"
 touch_output="$(cd "$WORKTREE" && HOME="$HOME_ROOT" "$TOUCH_SCRIPT" "$NOTE")"
 grep -Fq "sha=${BASE_SHA:0:7}" <<< "$touch_output"
+
+# A linked worktree name that matches a different primary checkout must not
+# shadow that checkout's repo key; primary checkouts define the identity.
+git init -q -b main "$COLLIDING_REPO"
+git -C "$COLLIDING_REPO" config user.name 'ai-index test'
+git -C "$COLLIDING_REPO" config user.email 'ai-index-test@example.invalid'
+printf 'feature repo\n' > "${COLLIDING_REPO}/tracked.txt"
+git -C "$COLLIDING_REPO" add tracked.txt
+git -C "$COLLIDING_REPO" commit -qm 'feature repo base'
+COLLIDING_SHA="$(git -C "$COLLIDING_REPO" rev-parse HEAD)"
+git -C "$REPO" worktree add -qb collision-feature "$COLLIDING_WORKTREE"
+mkdir -p "$(dirname "$COLLIDING_NOTE")"
+cat > "$COLLIDING_NOTE" <<EOF
+---
+repo: feature
+kind: overview
+sha: ${COLLIDING_SHA}
+verified: "2026-01-01"
+sources:
+  - tracked.txt
+---
+# Collision test
+EOF
+
+collision_status="$(HOME="$HOME_ROOT" "$STATUS_SCRIPT" "$COLLIDING_REPO")"
+grep -Fq "repo=feature @ main ${COLLIDING_SHA:0:7}" <<< "$collision_status"
+collision_stale="$(HOME="$HOME_ROOT" "$STALE_SCRIPT" feature)"
+grep -Fq "configured checkout: ${COLLIDING_REPO}" <<< "$collision_stale"
 
 cat > "${DOCS_ROOT}/index.md" <<'EOF'
 # Registry test
